@@ -1,0 +1,21 @@
+<Application x:Class="ExcelInsights.App.App"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" StartupUri="MainWindow.xaml">
+ <Application.Resources>
+  <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#24324A"/></Style>
+  <Style TargetType="Button">
+   <Setter Property="Padding" Value="16,9"/><Setter Property="Margin" Value="0,0,8,0"/>
+   <Setter Property="Background" Value="#E8EEFA"/><Setter Property="Foreground" Value="#234891"/>
+   <Setter Property="BorderThickness" Value="0"/><Setter Property="Cursor" Value="Hand"/>
+  </Style>
+  <Style TargetType="ComboBox"><Setter Property="MinHeight" Value="32"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+  <Style TargetType="DataGrid">
+   <Setter Property="AutoGenerateColumns" Value="True"/><Setter Property="IsReadOnly" Value="True"/>
+   <Setter Property="CanUserAddRows" Value="False"/><Setter Property="CanUserDeleteRows" Value="False"/>
+   <Setter Property="GridLinesVisibility" Value="Horizontal"/><Setter Property="HorizontalGridLinesBrush" Value="#E9EDF3"/>
+   <Setter Property="BorderBrush" Value="#E0E6F0"/><Setter Property="RowHeight" Value="30"/>
+   <Setter Property="AlternatingRowBackground" Value="#F7F9FC"/><Setter Property="HeadersVisibility" Value="Column"/>
+   <Setter Property="EnableRowVirtualization" Value="True"/><Setter Property="EnableColumnVirtualization" Value="True"/>
+  </Style>
+ </Application.Resources>
+</Application>
