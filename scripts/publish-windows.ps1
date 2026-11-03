@@ -7,7 +7,8 @@ try {
     if (-not (Test-Path $Python)) { throw 'Run setup.bat or uv sync --extra dev first.' }
     & $Python -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
-    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name ExcelInsights --paths src --hidden-import openpyxl --hidden-import xlrd --hidden-import pyxlsb --distpath artifacts/python-windows --workpath build/pyinstaller --specpath build main.py
+    # NumPy loads this module from a C extension; PyInstaller 6.13 cannot infer it.
+    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name ExcelInsights --paths src --hidden-import openpyxl --hidden-import xlrd --hidden-import pyxlsb --hidden-import numpy._core._exceptions --distpath artifacts/python-windows --workpath build/pyinstaller --specpath build main.py
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 
     $output = Join-Path $repo 'artifacts/python-windows'
