@@ -176,6 +176,9 @@ def read_workbook(path: str | Path) -> list[Sheet]:
         with open_workbook(str(path)) as book:
             for name in book.sheets:
                 with book.get_sheet(name) as sheet:
+                    dimension = sheet.dimension
+                    if dimension.c + dimension.w > MAX_COLUMNS or dimension.r + dimension.h > MAX_ROWS + 1:
+                        raise ValueError("工作表超過列數或欄數限制。")
                     # sparse=False preserves physical row positions, including the header.
                     def rows():
                         for raw in sheet.rows(sparse=False):

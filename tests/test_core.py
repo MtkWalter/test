@@ -144,3 +144,27 @@ def test_late_wide_row_cannot_expand_past_cell_limit(tmp_path, monkeypatch):
 def test_overflow_is_reported():
     with pytest.raises(OverflowError):
         analyze(pd.DataFrame({"v": [1e308, 1e308]}), "v")
+
+
+def test_xlsb_checks_dimensions_before_engine_allocates_row_arrays(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import pyxlsb
+
+    class OversizedSheet:
+        dimension = SimpleNamespace(r=0, c=0, h=2, w=16384)
+
+        def rows(self, **kwargs):
+            pytest.fail("Oversized binary worksheet should be rejected before allocating rows")
+
+    @contextmanager
+    def sheet_context(*args):
+        yield OversizedSheet()
+
+    @contextmanager
+    def workbook_context(*args):
+        yield SimpleNamespace(sheets=["large"], get_sheet=sheet_context)
+
+    monkeypatch.setattr(pyxlsb, "open_workbook", workbook_context)
+    with pytest.raises(ValueError, match="限制"):
+        read_workbook(tmp_path / "large.xlsb")
