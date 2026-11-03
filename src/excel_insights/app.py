@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QTableView, QVBoxLayout, QWidget, QSpinBox,
 )
 
+from . import __version__
 from .core import (
     SUMMARY_COLUMNS, TOTAL_CELL_LIMIT, Sheet, analyze, display, export_csv,
     filter_rows, is_blank, number, read_workbook,
@@ -131,7 +132,7 @@ class MainWindow(QMainWindow):
         self._updating = False
         self._worker: ImportWorker | None = None
         self.report_config = None
-        self.setWindowTitle("Excel Insights · Python 資料統計工作台")
+        self.setWindowTitle(f"Excel Insights · Python 資料統計工作台 v{__version__}")
         self.resize(1240, 850)
         self.setMinimumSize(980, 700)
         self.setAcceptDrops(True)
@@ -485,6 +486,19 @@ def main() -> int:
             report["template_report_first_total"] = result.frame.iloc[0]["Total act"]
             report["auto_remark_nodes"] = result.counts.get("remark_nodes", 0)
             report["remark_detail_rows"] = len(result.remark_details)
+            from openpyxl import Workbook
+            probe_path = args.smoke_output.with_name("formatted-range-probe.xlsx")
+            probe_book = Workbook(); probe_sheet = probe_book.active
+            probe_sheet.title = "monthly pivot(CS)"
+            probe_sheet.append(["Tech Node", "Amount"])
+            probe_sheet.append(["3nm", 120])
+            probe_sheet["XFD1048576"].number_format = "0.00"
+            probe_book.save(probe_path); probe_book.close()
+            probe = read_workbook(probe_path)
+            if len(probe) != 1 or probe[0].data.shape != (1, 2) or probe[0].data.iloc[0]["Amount"] != 120:
+                raise ValueError("Formatted blank ranges changed the imported data")
+            report["format_range_ignored"] = True
+            report["version"] = __version__
             args.smoke_output.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
             window.close()
             return 0

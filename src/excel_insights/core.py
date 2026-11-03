@@ -16,7 +16,7 @@ import pandas as pd
 from .schema import suggest_header
 
 MAX_ROWS = 100_000
-MAX_COLUMNS = 512
+MAX_COLUMNS = 16_384  # Excel's actual column limit; cell/row budgets still apply.
 MAX_CELLS = 1_000_000
 TOTAL_CELL_LIMIT = 2_000_000
 SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsb"}
@@ -89,6 +89,44 @@ def unique_headers(values: Iterable[object]) -> list[str]:
     return names
 
 
+def _xlsx_value_rows(sheet):
+    """Stream real cell values without materializing Excel's styled blank range.
+
+    The pinned openpyxl 3.1.5 parser is the same decoder used by iter_rows:
+    shared strings, cached formulas, booleans, errors and date formats retain
+    their normal behavior. Only its rectangular blank-range expansion is bypassed.
+    Preserve physical positions in the first 50 rows for header detection; after
+    that, blank rows can be skipped because the collector drops them anyway.
+    """
+    from openpyxl.worksheet._reader import WorkSheetParser
+
+    header_position = 0
+    with sheet._get_source() as source:
+        parser = WorkSheetParser(
+            source, sheet._shared_strings, data_only=sheet.parent.data_only,
+            epoch=sheet.parent.epoch, date_formats=sheet.parent._date_formats,
+            timedelta_formats=sheet.parent._timedelta_formats,
+        )
+        for row_number, cells in parser.parse():
+            populated = [cell for cell in cells if not is_blank(cell["value"])]
+            if not populated:
+                continue
+            width = max(cell["column"] for cell in populated)
+            if width > MAX_COLUMNS:
+                raise ValueError(f"工作表「{sheet.title}」的有效資料超過 {MAX_COLUMNS:,} 欄限制。")
+            row = [None] * width
+            for cell in populated:
+                row[cell["column"] - 1] = cell["value"]
+            # Padding is bounded to the header search window, never a million rows.
+            target = min(row_number - 1, 50)
+            while header_position < target:
+                header_position += 1
+                yield []
+            if row_number <= 50:
+                header_position = row_number
+            yield row
+
+
 class _Collector:
     """Enforce file-wide limits while streaming, before building dataframes."""
 
@@ -111,16 +149,19 @@ class _Collector:
             # Ignore unused trailing cells; retain later columns with actual data.
             while row and is_blank(row[-1]):
                 row.pop()
+            if row_number > 0 and not row:
+                continue
             width = max(width, len(row))
             self.scanned_cells += max(width, 1)
             if width > MAX_COLUMNS:
                 raise ValueError(f"工作表「{name}」超過 {MAX_COLUMNS} 欄限制。")
-            if self.scanned_cells > MAX_CELLS or row_number > MAX_ROWS:
+            is_data_row = row_number > 0 and bool(row)
+            retained_rows = max(0, len(records) - 1) + int(is_data_row)
+            if self.scanned_cells > MAX_CELLS or retained_rows > MAX_ROWS:
                 raise ValueError(f"檔案超過上限：每表 {MAX_ROWS:,} 列限制、每檔 {MAX_CELLS:,} 儲存格。")
-            retained_rows = max(0, len(records) - 1) + (1 if row_number > 0 else 0)
             if retained_rows * width + sum(sheet.cells for sheet in self.sheets) > MAX_CELLS:
                 raise ValueError(f"檔案超過 {MAX_CELLS:,} 儲存格限制。")
-            if row_number == 0 or any(not is_blank(value) for value in row):
+            if row_number == 0 or is_data_row:
                 records.append(row)
         if not records or not width:
             return
@@ -145,11 +186,7 @@ def read_workbook(path: str | Path, header_row: int | None = None) -> list[Sheet
         book = load_workbook(path, read_only=True, data_only=True)
         try:
             for sheet in book.worksheets:
-                if sheet.max_column and sheet.max_column > MAX_COLUMNS:
-                    raise ValueError(f"工作表「{sheet.title}」超過 {MAX_COLUMNS} 欄限制（包含格式範圍）。")
-                if sheet.max_row and sheet.max_row > MAX_ROWS + 50:
-                    raise ValueError(f"工作表「{sheet.title}」超過 {MAX_ROWS:,} 列限制（包含空白範圍）。")
-                collector.consume(sheet.title, sheet.iter_rows(values_only=True), header_row)
+                collector.consume(sheet.title, _xlsx_value_rows(sheet), header_row)
         finally:
             book.close()
     elif suffix == ".xls":

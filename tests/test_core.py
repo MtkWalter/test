@@ -141,6 +141,99 @@ def test_late_wide_row_cannot_expand_past_cell_limit(tmp_path, monkeypatch):
         read_workbook(path)
 
 
+def test_styled_last_excel_cell_does_not_inflate_actual_range(tmp_path):
+    from openpyxl.styles import PatternFill
+    path = tmp_path / "monthly.xlsx"
+    book = Workbook(); sheet = book.active; sheet.title = "monthly pivot(CS)"
+    sheet.append(["Tech Node", "Amount"])
+    sheet.append(["3nm", 120])
+    sheet["XFD1048576"].fill = PatternFill("solid", fgColor="FFFFFF00")
+    book.save(path); book.close()
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    result = read_workbook(path)[0]
+    assert result.name == "monthly pivot(CS)"
+    assert result.data.shape == (1, 2)
+    assert result.data.iloc[0].tolist() == ["3nm", 120]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_format_padding_preserves_fourth_row_header_and_skips_empty_sheet(tmp_path):
+    from openpyxl.styles import PatternFill
+    path = tmp_path / "mixed.xlsx"
+    book = Workbook(); sheet = book.active; sheet.title = "input"
+    sheet.cell(2, 2, "FTA 5"); sheet.cell(3, 3, "V")
+    for col, value in enumerate(["Tech Node", "Amount", "scenario"], 1): sheet.cell(4, col, value)
+    for col, value in enumerate(["3nm", 120, "act"], 1): sheet.cell(5, col, value)
+    sheet.cell(6, 600).number_format = "#,##0"
+    blank = book.create_sheet("format only")
+    blank["XFD1048576"].fill = PatternFill("solid", fgColor="FFFF0000")
+    book.save(path); book.close()
+    results = read_workbook(path)
+    assert len(results) == 1
+    assert results[0].header_row == 4
+    assert results[0].data.shape == (1, 3)
+    assert read_workbook(path, header_row=4)[0].data.equals(results[0].data)
+
+
+def test_real_columns_past_512_are_imported_without_dropping_last_value(tmp_path):
+    path = tmp_path / "wide-pivot.xlsx"
+    book = Workbook(); sheet = book.active
+    sheet.cell(1, 1, "Tech Node"); sheet.cell(1, 600, "Amount")
+    sheet.cell(2, 1, "3nm"); sheet.cell(2, 600, 125)
+    book.save(path); book.close()
+    result = read_workbook(path)[0]
+    assert result.data.shape == (1, 600)
+    assert result.data.iloc[0]["Amount"] == 125
+    assert analyze(result.data, "Amount").iloc[0]["總和"] == 125
+
+
+def test_sparse_data_rows_are_counted_not_blank_physical_gaps(tmp_path, monkeypatch):
+    path = tmp_path / "sparse.xlsx"
+    book = Workbook(); sheet = book.active
+    sheet.append(["Tech Node", "Amount"])
+    sheet.append(["3nm", 120])
+    sheet.cell(1_048_576, 1, "5nm"); sheet.cell(1_048_576, 2, 80)
+    book.save(path); book.close()
+    monkeypatch.setattr(core, "MAX_ROWS", 2)
+    monkeypatch.setattr(core, "MAX_CELLS", 10)
+    result = read_workbook(path)[0]
+    assert len(result.data) == 2
+    assert result.data["Amount"].tolist() == [120, 80]
+
+
+def test_actual_column_limit_still_rejects_data_instead_of_truncating(tmp_path, monkeypatch):
+    path = write_xlsx(tmp_path / "too-wide.xlsx", [["Tech Node", "Amount", "extra"], ["3nm", 120, 1]])
+    monkeypatch.setattr(core, "MAX_COLUMNS", 2)
+    with pytest.raises(ValueError, match="有效資料"):
+        read_workbook(path)
+
+
+def test_sparse_reader_preserves_cached_formulas_and_1904_dates(tmp_path):
+    from zipfile import ZipFile, ZIP_DEFLATED
+    import xml.etree.ElementTree as ET
+    from openpyxl.utils.datetime import CALENDAR_MAC_1904
+    source = tmp_path / "cached-source.xlsx"
+    book = Workbook(); book.epoch = CALENDAR_MAC_1904; sheet = book.active
+    sheet.append(["Tech Node", "Amount", "日期", "是否"])
+    sheet.append(["3nm", "=2+3", datetime(2026, 9, 1), False])
+    sheet.cell(1048576, 16384).number_format = "0.00"
+    book.save(source); book.close()
+    path = tmp_path / "cached.xlsx"
+    ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with ZipFile(source) as original, ZipFile(path, "w", ZIP_DEFLATED) as patched:
+        for entry in original.infolist():
+            data = original.read(entry.filename)
+            if entry.filename == "xl/worksheets/sheet1.xml":
+                xml = ET.fromstring(data)
+                xml.find("s:dimension", ns).set("ref", "A1:A1")
+                xml.find(".//s:c[@r='B2']/s:v", ns).text = "5"
+                data = ET.tostring(xml, encoding="utf-8")
+            patched.writestr(entry, data)
+    result = read_workbook(path)[0]
+    assert result.data.shape == (1, 4)
+    assert result.data.iloc[0].tolist() == ["3nm", 5, datetime(2026, 9, 1), False]
+
+
 def test_overflow_is_reported():
     with pytest.raises(OverflowError):
         analyze(pd.DataFrame({"v": [1e308, 1e308]}), "v")
@@ -152,7 +245,7 @@ def test_xlsb_checks_dimensions_before_engine_allocates_row_arrays(tmp_path, mon
     import pyxlsb
 
     class OversizedSheet:
-        dimension = SimpleNamespace(r=0, c=0, h=2, w=16384)
+        dimension = SimpleNamespace(r=0, c=0, h=2, w=16385)
 
         def rows(self, **kwargs):
             pytest.fail("Oversized binary worksheet should be rejected before allocating rows")
