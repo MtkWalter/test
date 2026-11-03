@@ -20,6 +20,7 @@ try {
     try {
         $env:QT_QPA_PLATFORM = 'offscreen'
         $process = Start-Process -FilePath (Join-Path $output 'ExcelInsights.exe') -ArgumentList $arguments -PassThru
+        $null = $process.Handle
         if (-not $process.WaitForExit(120000)) {
             $process.Kill()
             throw 'Frozen executable smoke test timed out.'
@@ -41,4 +42,11 @@ try {
     $checksum = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$checksum  ExcelInsights-Python-Windows-x64.zip" | Set-Content artifacts/Python-SHA256SUMS.txt -Encoding ascii
     Write-Host "Ready: $archive"
+} catch {
+    $details = $_.Exception.Message
+    $smoke = Join-Path $repo 'artifacts/python-smoke.json'
+    if (Test-Path $smoke) { $details += "`n" + (Get-Content $smoke -Raw -Encoding UTF8) }
+    $escaped = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+    Write-Output "::error::$escaped"
+    throw
 } finally { Pop-Location }
