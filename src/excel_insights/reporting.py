@@ -129,10 +129,13 @@ def suggest_config(sheets: list[Sheet]) -> ReportConfig:
     config = ReportConfig()
     for sheet in sheets:
         config.mappings[schema_key(sheet.data.columns)] = suggest_mapping(sheet.data.columns)
-    scenarios = observed_values(sheets, config, "scenario")
-    config.actual = next((v for v in scenarios if normalize(v) in {"act", "actual", "實際"}), "")
-    config.original = next((v for v in scenarios if normalize(v) in {"ori", "original", "budget", "預算"}), "")
-    categories = observed_values(sheets, config, "category")
+    eligible = [sheet for sheet in sheets if all(config.mapping(sheet).get(k) for k in ("node", "amount", "scenario"))]
+    scenarios = observed_values(eligible, config, "scenario")
+    actual = [v for v in scenarios if normalize(v) in {"act", "actual", "實際"}]
+    original = [v for v in scenarios if normalize(v) in {"ori", "original", "budget", "預算"}]
+    config.actual = actual[0] if len(actual) == 1 else ""
+    config.original = original[0] if len(original) == 1 else ""
+    categories = observed_values(eligible, config, "category")
     aliases = {"TSMC": {"tsmc", "台積電"}, "Non-T": {"nontsmc", "nont", "非台積電"}, "FI": {"fi"}}
     for name in CATEGORIES:
         config.rules[name].values = [v for v in categories if normalize(v) in aliases[name]]

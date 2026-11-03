@@ -133,6 +133,17 @@ def test_missing_required_columns_and_invalid_threshold_block_output():
     with pytest.raises(ValueError, match="門檻"): build_report([source], config)
 
 
+def test_ambiguous_budget_and_ori_requires_local_selection_instead_of_guessing():
+    source = demo_sheet()
+    extra = source.data.iloc[[0]].copy()
+    extra["budget / act"] = "budget"
+    source.data = pd.concat([source.data, extra], ignore_index=True)
+    config = suggest_config([source])
+    assert config.actual == "act"
+    assert config.original == ""
+    with pytest.raises(ValueError, match="ori"): build_report([source], config)
+
+
 def test_template_export_reopens_with_values_styles_rules_and_no_injected_formula(tmp_path):
     source = demo_sheet(); source.data.at[0, "Tech Node"] = "=1+1"
     source.data.at[0, "Remark"] = "=HYPERLINK(\"https://example.com\")"
