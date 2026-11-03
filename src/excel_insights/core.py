@@ -10,8 +10,10 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Iterable
+from itertools import chain, islice
 
 import pandas as pd
+from .schema import suggest_header
 
 MAX_ROWS = 100_000
 MAX_COLUMNS = 512
@@ -61,6 +63,7 @@ class Sheet:
     path: Path
     name: str
     data: pd.DataFrame
+    header_row: int = 1
 
     @property
     def label(self) -> str:
@@ -94,7 +97,13 @@ class _Collector:
         self.scanned_cells = 0
         self.sheets: list[Sheet] = []
 
-    def consume(self, name: str, rows: Iterable[Iterable[object]]) -> None:
+    def consume(self, name: str, rows: Iterable[Iterable[object]], header_row: int | None = None) -> None:
+        iterator = iter(rows)
+        first = [list(row) for row in islice(iterator, 50)]
+        header_row = header_row or suggest_header(first)
+        if not 1 <= header_row <= 50:
+            raise ValueError("標題列必須介於 1 與 50。")
+        rows = chain(first[header_row - 1:], iterator)
         records: list[list[object]] = []
         width = 0
         for row_number, raw in enumerate(rows):
@@ -107,7 +116,7 @@ class _Collector:
             if width > MAX_COLUMNS:
                 raise ValueError(f"工作表「{name}」超過 {MAX_COLUMNS} 欄限制。")
             if self.scanned_cells > MAX_CELLS or row_number > MAX_ROWS:
-                raise ValueError(f"檔案超過上限：每表 {MAX_ROWS:,} 列、每檔 {MAX_CELLS:,} 儲存格。")
+                raise ValueError(f"檔案超過上限：每表 {MAX_ROWS:,} 列限制、每檔 {MAX_CELLS:,} 儲存格。")
             retained_rows = max(0, len(records) - 1) + (1 if row_number > 0 else 0)
             if retained_rows * width + sum(sheet.cells for sheet in self.sheets) > MAX_CELLS:
                 raise ValueError(f"檔案超過 {MAX_CELLS:,} 儲存格限制。")
@@ -119,10 +128,12 @@ class _Collector:
         body = [row + [None] * (width - len(row)) for row in records[1:]]
         # Explicit object dtype preserves booleans, dates, literal NA and numeric text.
         data = pd.DataFrame(body, columns=unique_headers(header), dtype=object)
-        self.sheets.append(Sheet(self.path, name, data))
+        self.sheets.append(Sheet(self.path, name, data, header_row))
 
 
-def read_workbook(path: str | Path) -> list[Sheet]:
+def read_workbook(path: str | Path, header_row: int | None = None) -> list[Sheet]:
+    if header_row is not None and not 1 <= header_row <= 50:
+        raise ValueError("標題列必須介於 1 與 50。")
     path = Path(path).resolve()
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
@@ -136,9 +147,9 @@ def read_workbook(path: str | Path) -> list[Sheet]:
             for sheet in book.worksheets:
                 if sheet.max_column and sheet.max_column > MAX_COLUMNS:
                     raise ValueError(f"工作表「{sheet.title}」超過 {MAX_COLUMNS} 欄限制（包含格式範圍）。")
-                if sheet.max_row and sheet.max_row > MAX_ROWS + 1:
+                if sheet.max_row and sheet.max_row > MAX_ROWS + 50:
                     raise ValueError(f"工作表「{sheet.title}」超過 {MAX_ROWS:,} 列限制（包含空白範圍）。")
-                collector.consume(sheet.title, sheet.iter_rows(values_only=True))
+                collector.consume(sheet.title, sheet.iter_rows(values_only=True), header_row)
         finally:
             book.close()
     elif suffix == ".xls":
@@ -148,7 +159,7 @@ def read_workbook(path: str | Path) -> list[Sheet]:
         try:
             for index in range(book.nsheets):
                 sheet = book.sheet_by_index(index)
-                if sheet.ncols > MAX_COLUMNS or sheet.nrows > MAX_ROWS + 1:
+                if sheet.ncols > MAX_COLUMNS or sheet.nrows > MAX_ROWS + 50:
                     raise ValueError("工作表超過列數或欄數限制。")
 
                 def rows():
@@ -166,7 +177,7 @@ def read_workbook(path: str | Path) -> list[Sheet]:
                             result.append(value)
                         yield result
 
-                collector.consume(sheet.name, rows())
+                collector.consume(sheet.name, rows(), header_row)
                 book.unload_sheet(index)
         finally:
             book.release_resources()
@@ -177,7 +188,7 @@ def read_workbook(path: str | Path) -> list[Sheet]:
             for name in book.sheets:
                 with book.get_sheet(name) as sheet:
                     dimension = sheet.dimension
-                    if dimension.c + dimension.w > MAX_COLUMNS or dimension.r + dimension.h > MAX_ROWS + 1:
+                    if dimension.c + dimension.w > MAX_COLUMNS or dimension.r + dimension.h > MAX_ROWS + 50:
                         raise ValueError("工作表超過列數或欄數限制。")
                     # sparse=False preserves physical row positions, including the header.
                     def rows():
@@ -189,7 +200,7 @@ def read_workbook(path: str | Path) -> list[Sheet]:
                                 values[cell.c] = cell.v
                             yield values
 
-                    collector.consume(name, rows())
+                    collector.consume(name, rows(), header_row)
     return collector.sheets
 
 

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QSplitter, QStackedWidget,
-    QTableView, QVBoxLayout, QWidget,
+    QTableView, QVBoxLayout, QWidget, QSpinBox,
 )
 
 from .core import (
@@ -84,10 +84,11 @@ class ImportWorker(QThread):
     progress = Signal(str)
     result = Signal(object, object)
 
-    def __init__(self, paths: list[Path], existing: list[Sheet], parent=None):
+    def __init__(self, paths: list[Path], existing: list[Sheet], parent=None, header_row=None):
         super().__init__(parent)
         self.paths = paths
         self.existing = existing.copy()
+        self.header_row = header_row
 
     def run(self):
         loaded: list[Sheet] = []
@@ -99,7 +100,7 @@ class ImportWorker(QThread):
                 continue
             self.progress.emit(f"正在匯入 {path.name}…")
             try:
-                sheets = read_workbook(path)
+                sheets = read_workbook(path, self.header_row)
                 incoming = sum(sheet.cells for sheet in sheets)
                 if cells + incoming > TOTAL_CELL_LIMIT:
                     raise ValueError("已載入資料超過 2,000,000 儲存格限制；請先移除部分工作表。")
@@ -129,6 +130,7 @@ class MainWindow(QMainWindow):
         self.busy = False
         self._updating = False
         self._worker: ImportWorker | None = None
+        self.report_config = None
         self.setWindowTitle("Excel Insights · Python 資料統計工作台")
         self.resize(1240, 850)
         self.setMinimumSize(980, 700)
@@ -159,6 +161,14 @@ class MainWindow(QMainWindow):
         self.import_button.clicked.connect(self.choose_files)
         left.addWidget(self.import_button)
         left.addWidget(label("可一次選取多檔，或拖曳檔案至視窗"))
+        left.addWidget(label("標題列（修改後重新匯入）"))
+        self.header_row = QSpinBox()
+        self.header_row.setRange(0, 50)
+        self.header_row.setSpecialValueText("自動判讀標題列")
+        left.addWidget(self.header_row)
+        self.report_button = QPushButton("本機判讀＋報表預覽")
+        self.report_button.clicked.connect(self.open_report)
+        left.addWidget(self.report_button)
         left.addWidget(label("檔案 / 工作表"))
         self.sheet_list = QListWidget()
         self.sheet_list.currentRowChanged.connect(self.select_sheet)
@@ -272,10 +282,10 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         self.busy = True
-        for button in (self.import_button, self.remove_button, self.clear_button):
+        for button in (self.import_button, self.remove_button, self.clear_button, self.report_button):
             button.setEnabled(False)
         self.progress.show()
-        self._worker = ImportWorker(paths, self.sheets, self)
+        self._worker = ImportWorker(paths, self.sheets, self, self.header_row.value() or None)
         self._worker.progress.connect(self.status.setText)
         self._worker.result.connect(self._import_result)
         self._worker.finished.connect(self._import_finished)
@@ -296,7 +306,7 @@ class MainWindow(QMainWindow):
 
     def _import_finished(self):
         self.busy = False
-        for button in (self.import_button, self.remove_button, self.clear_button):
+        for button in (self.import_button, self.remove_button, self.clear_button, self.report_button):
             button.setEnabled(True)
         self.progress.hide()
         if self._worker:
@@ -381,6 +391,16 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.critical(self, "無法匯出", str(exc))
 
+    def open_report(self):
+        from .report_ui import ReportDialog
+        dialog = ReportDialog(self.sheets, self.report_config, self)
+        dialog.exec()
+        # Keep edits for this session; explicit JSON save is available in the dialog.
+        # Demo rules are intentionally kept inside the demo dialog only.
+        if len(dialog.sheets) == len(self.sheets) and all(a is b for a, b in zip(dialog.sheets, self.sheets)):
+            self.report_config = dialog.config
+        dialog.deleteLater()
+
     def remove_sheet(self):
         index = self.sheet_list.currentRow()
         if self.busy or index < 0:
@@ -440,6 +460,21 @@ def main() -> int:
             app.processEvents()
             report = {"sheets": len(window.sheets), "preview_rows": window.preview.model().rowCount(),
                       "summary": window.summary.to_dict(orient="records")}
+            from .report_ui import ReportDialog
+            from .reporting import build_report, demo_sheet, export_report, suggest_config
+            demo = demo_sheet()
+            config = suggest_config([demo])
+            result = build_report([demo], config)
+            report_path = args.smoke_output.with_suffix(".xlsx")
+            export_report(report_path, result, config, [demo])
+            designer = ReportDialog([demo], config)
+            designer.show()
+            app.processEvents()
+            if designer.result is None or designer.result.frame.empty:
+                raise ValueError("Report designer produced no preview")
+            designer.close()
+            report["template_report_rows"] = len(result.frame)
+            report["template_report_first_total"] = result.frame.iloc[0]["Total act"]
             args.smoke_output.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
             window.close()
             return 0

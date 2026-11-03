@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "settings": {
+    "mappings": {
+      "7fb5e0121158acbd13af06a30c6785bd0842102766e3a4b6e202a6175bf1cc73": {
+        "node": "Tech Node",
+        "amount": "sales-NTD",
+        "scenario": "budget / act",
+        "category": "TSMC/non TSMC",
+        "enduser": "END USER",
+        "product": "Prod",
+        "supplier": "suppiler",
+        "part": "P/N",
+        "year": "Year(calender)",
+        "month": "Month(calender)",
+        "date": null,
+        "remark": "Remark"
+      }
+    },
+    "actual": "act",
+    "original": "ori",
+    "rules": {
+      "TSMC": {
+        "field": "category",
+        "operator": "equals",
+        "values": [
+          "TSMC"
+        ]
+      },
+      "Non-T": {
+        "field": "category",
+        "operator": "equals",
+        "values": [
+          "Non-T"
+        ]
+      },
+      "FI": {
+        "field": "category",
+        "operator": "equals",
+        "values": [
+          "FI"
+        ]
+      }
+    },
+    "filters": {},
+    "year_mode": "fiscal",
+    "year": 2027,
+    "fiscal_start": 4,
+    "month": 9,
+    "difference": "act-ori",
+    "percentage": "ratio",
+    "upper": 115.0,
+    "lower": 85.0,
+    "multiplier": 1.0,
+    "display_unit": 1000000,
+    "decimals": 0,
+    "total_mode": "all",
+    "total_row": false,
+    "label": ""
+  }
+}

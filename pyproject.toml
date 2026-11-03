@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "excel-insights"
-version = "0.2.0"
+version = "0.3.0"
 description = "繁體中文 Excel 桌面統計工作台"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -23,6 +23,9 @@ excel-insights = "excel_insights.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+excel_insights = ["assets/*.xlsx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -19,7 +19,7 @@ def wait_for_import(window, qapp):
 
 def test_desktop_import_filter_group_export_remove(window, qapp, samples, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
-    window.import_paths(list(samples.glob("*.xlsx")))
+    window.import_paths(list(samples.glob("銷售範例-*.xlsx")))
     wait_for_import(window, qapp)
     assert len(window.sheets) == 3
     index = next(i for i, sheet in enumerate(window.sheets) if sheet.path.name.endswith("一月.xlsx") and sheet.name == "銷售明細")

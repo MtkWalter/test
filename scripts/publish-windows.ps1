@@ -8,7 +8,7 @@ try {
     & $Python -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     # NumPy loads this module from a C extension; PyInstaller 6.13 cannot infer it.
-    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name ExcelInsights --paths src --hidden-import openpyxl --hidden-import xlrd --hidden-import pyxlsb --hidden-import numpy._core._exceptions --distpath artifacts/python-windows --workpath build/pyinstaller --specpath build main.py
+    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name ExcelInsights --paths src --hidden-import openpyxl --hidden-import xlrd --hidden-import pyxlsb --hidden-import numpy._core._exceptions --collect-data excel_insights --distpath artifacts/python-windows --workpath build/pyinstaller --specpath build main.py
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 
     $output = Join-Path $repo 'artifacts/python-windows'
@@ -33,7 +33,7 @@ try {
     }
     if (-not (Test-Path $report)) { throw 'Frozen executable produced no smoke report.' }
     $result = Get-Content $report -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($result.sheets -ne 2 -or $result.preview_rows -ne 6 -or $result.summary[0].'總和' -ne 11100) {
+    if ($result.sheets -ne 2 -or $result.preview_rows -ne 6 -or $result.summary[0].'總和' -ne 11100 -or $result.template_report_rows -ne 6 -or $result.template_report_first_total -ne 191000000) {
         throw 'Frozen executable statistics do not match the sample.'
     }
     Copy-Item README.md $output -Force
