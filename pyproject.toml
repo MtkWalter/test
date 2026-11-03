@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "excel-insights"
-version = "0.3.1"
+version = "0.3.2"
 description = "繁體中文 Excel 桌面統計工作台"
 requires-python = ">=3.11,<3.14"
 dependencies = [

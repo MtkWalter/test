@@ -5,7 +5,7 @@ import csv
 import math
 import numbers
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -14,15 +14,79 @@ from itertools import chain, islice
 
 import pandas as pd
 from .schema import suggest_header
+from .resources import ensure_import_memory
 
-MAX_ROWS = 100_000
+MAX_ROWS = 1_048_575
 MAX_COLUMNS = 16_384  # Excel's actual column limit; cell/row budgets still apply.
-MAX_CELLS = 1_000_000
-TOTAL_CELL_LIMIT = 2_000_000
+MAX_CELLS = 20_000_000
+TOTAL_CELL_LIMIT = 30_000_000
 SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsb"}
 NUMBER_PATTERN = re.compile(
     r"^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
 )
+
+
+class ImportCancelled(Exception):
+    pass
+
+
+class ImportLimitError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ImportLimits:
+    max_rows: int = field(default_factory=lambda: MAX_ROWS)
+    max_cells: int = field(default_factory=lambda: MAX_CELLS)
+    total_cells: int = field(default_factory=lambda: TOTAL_CELL_LIMIT)
+
+    def validate(self):
+        if not 1 <= self.max_rows <= 1_048_575 or not 1 <= self.max_cells <= 200_000_000 or not 1 <= self.total_cells <= 200_000_000:
+            raise ValueError("匯入上限設定無效。")
+
+
+def _check_cancelled(cancelled):
+    if cancelled and cancelled():
+        raise ImportCancelled("已取消匯入。")
+
+
+def _check_selection(available, selected):
+    if selected is None:
+        return
+    missing = set(selected) - set(available)
+    if missing:
+        raise ValueError("找不到所選工作表：" + "、".join(sorted(missing)))
+
+
+def workbook_sheet_names(path: str | Path) -> list[str]:
+    """Read a sheet catalog without decoding worksheet rows."""
+    ensure_import_memory()
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        # Catalog only: avoid reading all shared strings, styles or worksheet rows
+        # just to let the user exclude a large pivot. Uses pinned openpyxl 3.1.5.
+        from openpyxl.reader.excel import ExcelReader
+        reader = ExcelReader(path, read_only=True, data_only=True, keep_links=False)
+        try:
+            reader.read_manifest()
+            reader.read_workbook()
+            return [sheet.name for sheet, relation in reader.parser.find_sheets()
+                    if relation.Type.endswith("/worksheet")]
+        finally:
+            reader.archive.close()
+    if suffix == ".xls":
+        import xlrd
+        book = xlrd.open_workbook(str(path), on_demand=True)
+        try:
+            return book.sheet_names()
+        finally:
+            book.release_resources()
+    if suffix == ".xlsb":
+        from pyxlsb import open_workbook
+        with open_workbook(str(path)) as book:
+            return list(book.sheets)
+    raise ValueError("只支援 .xlsx、.xls、.xlsb 檔案。")
 
 
 def is_blank(value: object) -> bool:
@@ -89,7 +153,7 @@ def unique_headers(values: Iterable[object]) -> list[str]:
     return names
 
 
-def _xlsx_value_rows(sheet):
+def _xlsx_value_rows(sheet, cancelled=None):
     """Stream real cell values without materializing Excel's styled blank range.
 
     The pinned openpyxl 3.1.5 parser is the same decoder used by iter_rows:
@@ -108,6 +172,8 @@ def _xlsx_value_rows(sheet):
             timedelta_formats=sheet.parent._timedelta_formats,
         )
         for row_number, cells in parser.parse():
+            if row_number % 1000 == 0:
+                _check_cancelled(cancelled)
             populated = [cell for cell in cells if not is_blank(cell["value"])]
             if not populated:
                 continue
@@ -130,12 +196,18 @@ def _xlsx_value_rows(sheet):
 class _Collector:
     """Enforce file-wide limits while streaming, before building dataframes."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, limits=None, cancelled=None, progress=None):
         self.path = path
+        self.limits = limits or ImportLimits()
+        self.limits.validate()
+        self.cancelled = cancelled
+        self.progress = progress
         self.scanned_cells = 0
         self.sheets: list[Sheet] = []
 
     def consume(self, name: str, rows: Iterable[Iterable[object]], header_row: int | None = None) -> None:
+        _check_cancelled(self.cancelled)
+        ensure_import_memory()
         iterator = iter(rows)
         first = [list(row) for row in islice(iterator, 50)]
         header_row = header_row or suggest_header(first)
@@ -144,7 +216,11 @@ class _Collector:
         rows = chain(first[header_row - 1:], iterator)
         records: list[list[object]] = []
         width = 0
+        completed_cells = sum(sheet.cells for sheet in self.sheets)
+        last_memory_check = self.scanned_cells
         for row_number, raw in enumerate(rows):
+            if row_number % 1000 == 0:
+                _check_cancelled(self.cancelled)
             row = list(raw)
             # Ignore unused trailing cells; retain later columns with actual data.
             while row and is_blank(row[-1]):
@@ -157,36 +233,57 @@ class _Collector:
                 raise ValueError(f"工作表「{name}」超過 {MAX_COLUMNS} 欄限制。")
             is_data_row = row_number > 0 and bool(row)
             retained_rows = max(0, len(records) - 1) + int(is_data_row)
-            if self.scanned_cells > MAX_CELLS or retained_rows > MAX_ROWS:
-                raise ValueError(f"檔案超過上限：每表 {MAX_ROWS:,} 列限制、每檔 {MAX_CELLS:,} 儲存格。")
-            if retained_rows * width + sum(sheet.cells for sheet in self.sheets) > MAX_CELLS:
-                raise ValueError(f"檔案超過 {MAX_CELLS:,} 儲存格限制。")
+            if retained_rows > self.limits.max_rows:
+                raise ImportLimitError(f"工作表「{name}」已讀取 {retained_rows:,} 列，超過 {self.limits.max_rows:,} 列限制。")
+            required = max(self.scanned_cells, retained_rows * width + completed_cells)
+            if required > self.limits.max_cells:
+                raise ImportLimitError(f"檔案「{self.path.name}」工作表「{name}」已讀取 {retained_rows:,} 列、{width:,} 欄，需要 {required:,} 儲存格，超過此次每檔設定 {self.limits.max_cells:,} 格。請只選需要的工作表，或提高匯入視窗的上限。")
+            if self.scanned_cells - last_memory_check >= 100_000:
+                ensure_import_memory()
+                last_memory_check = self.scanned_cells
+                if self.progress:
+                    self.progress(f"{self.path.name} / {name}：已讀取 {retained_rows:,} 列")
             if row_number == 0 or is_data_row:
                 records.append(row)
         if not records or not width:
             return
-        header = records[0] + [None] * (width - len(records[0]))
-        body = [row + [None] * (width - len(row)) for row in records[1:]]
+        ensure_import_memory(max(0, len(records) - 1) * width * 24)
+        _check_cancelled(self.cancelled)
+        header = records.pop(0)
+        header.extend([None] * (width - len(header)))
+        for row in records:
+            row.extend([None] * (width - len(row)))
         # Explicit object dtype preserves booleans, dates, literal NA and numeric text.
-        data = pd.DataFrame(body, columns=unique_headers(header), dtype=object)
+        data = pd.DataFrame(records, columns=unique_headers(header), dtype=object)
         self.sheets.append(Sheet(self.path, name, data, header_row))
 
 
-def read_workbook(path: str | Path, header_row: int | None = None) -> list[Sheet]:
+def read_workbook(path: str | Path, header_row: int | None = None, *, selected_sheets=None,
+                  limits: ImportLimits | None = None, cancelled=None, progress=None) -> list[Sheet]:
     if header_row is not None and not 1 <= header_row <= 50:
         raise ValueError("標題列必須介於 1 與 50。")
     path = Path(path).resolve()
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise ValueError("只支援 .xlsx、.xls、.xlsb 檔案。")
-    collector = _Collector(path)
+    if isinstance(selected_sheets, str):
+        raise ValueError("請以工作表名稱清單指定匯入範圍。")
+    selected_sheets = set(selected_sheets) if selected_sheets is not None else None
+    if selected_sheets == set():
+        return []
+    collector = _Collector(path, limits, cancelled, progress)
+    ensure_import_memory()
+    _check_cancelled(cancelled)
     if suffix == ".xlsx":
         from openpyxl import load_workbook
 
-        book = load_workbook(path, read_only=True, data_only=True)
+        book = load_workbook(path, read_only=True, data_only=True, keep_links=False)
         try:
+            _check_selection([sheet.title for sheet in book.worksheets], selected_sheets)
             for sheet in book.worksheets:
-                collector.consume(sheet.title, _xlsx_value_rows(sheet), header_row)
+                if selected_sheets is not None and sheet.title not in selected_sheets:
+                    continue
+                collector.consume(sheet.title, _xlsx_value_rows(sheet, cancelled), header_row)
         finally:
             book.close()
     elif suffix == ".xls":
@@ -194,9 +291,12 @@ def read_workbook(path: str | Path, header_row: int | None = None) -> list[Sheet
 
         book = xlrd.open_workbook(str(path), on_demand=True)
         try:
+            _check_selection(book.sheet_names(), selected_sheets)
             for index in range(book.nsheets):
+                if selected_sheets is not None and book.sheet_names()[index] not in selected_sheets:
+                    continue
                 sheet = book.sheet_by_index(index)
-                if sheet.ncols > MAX_COLUMNS or sheet.nrows > MAX_ROWS + 50:
+                if sheet.ncols > MAX_COLUMNS or sheet.nrows > collector.limits.max_rows + 50:
                     raise ValueError("工作表超過列數或欄數限制。")
 
                 def rows():
@@ -222,10 +322,13 @@ def read_workbook(path: str | Path, header_row: int | None = None) -> list[Sheet
         from pyxlsb import open_workbook
 
         with open_workbook(str(path)) as book:
+            _check_selection(book.sheets, selected_sheets)
             for name in book.sheets:
+                if selected_sheets is not None and name not in selected_sheets:
+                    continue
                 with book.get_sheet(name) as sheet:
                     dimension = sheet.dimension
-                    if dimension.c + dimension.w > MAX_COLUMNS or dimension.r + dimension.h > MAX_ROWS + 50:
+                    if dimension.c + dimension.w > MAX_COLUMNS or dimension.r + dimension.h > collector.limits.max_rows + 50:
                         raise ValueError("工作表超過列數或欄數限制。")
                     # sparse=False preserves physical row positions, including the header.
                     def rows():
