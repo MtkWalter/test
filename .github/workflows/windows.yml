@@ -28,3 +28,14 @@ jobs:
             artifacts/ExcelInsights-Python-Windows-x64.zip
             artifacts/Python-SHA256SUMS.txt
             artifacts/python-smoke.json
+      - name: Package and validate the separate MonthlyReport EXE
+        shell: pwsh
+        run: ./scripts/publish-report-windows.ps1 -SkipTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MonthlyReport-windows-x64
+          if-no-files-found: error
+          path: |
+            artifacts/MonthlyReport-Windows-x64.zip
+            artifacts/Report-SHA256SUMS.txt
+            artifacts/report-smoke.json

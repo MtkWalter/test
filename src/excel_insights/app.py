@@ -104,7 +104,7 @@ class ImportWorker(QThread):
                 sheets = read_workbook(path, self.header_row)
                 incoming = sum(sheet.cells for sheet in sheets)
                 if cells + incoming > TOTAL_CELL_LIMIT:
-                    raise ValueError("已載入資料超過 2,000,000 儲存格限制；請先移除部分工作表。")
+                    raise ValueError(f"已載入資料超過 {TOTAL_CELL_LIMIT:,} 儲存格的記憶體保護上限；請先移除部分工作表。")
                 if not sheets:
                     raise ValueError("沒有可讀取的工作表。")
                 loaded.extend(sheets)

@@ -1,0 +1,11 @@
+{
+  "tsmc_values": ["tsmc"],
+  "non_t_values": null,
+  "node_aliases": {
+    "N2": "N2/A16",
+    "A16": "N2/A16",
+    "N3": "N3/N3E",
+    "N3E": "N3/N3E"
+  },
+  "fiscal_start_month": 4
+}
