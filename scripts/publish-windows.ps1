@@ -33,7 +33,7 @@ try {
     }
     if (-not (Test-Path $report)) { throw 'Frozen executable produced no smoke report.' }
     $result = Get-Content $report -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($result.sheets -ne 2 -or $result.preview_rows -ne 6 -or $result.summary[0].'總和' -ne 11100 -or $result.template_report_rows -ne 6 -or $result.template_report_first_total -ne 191000000 -or $result.manual_remark -ne "smoke Remark") {
+    if ($result.sheets -ne 2 -or $result.preview_rows -ne 6 -or $result.summary[0].'總和' -ne 11100 -or $result.template_report_rows -ne 6 -or $result.template_report_first_total -ne 191000000 -or $result.manual_remark -ne "smoke Remark" -or $result.auto_remark_nodes -ne 6 -or $result.remark_detail_rows -ne 12) {
         throw 'Frozen executable statistics do not match the sample.'
     }
     Copy-Item README.md $output -Force

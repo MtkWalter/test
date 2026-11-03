@@ -8,6 +8,7 @@ FIELDS = {
     "scenario": ("budget / act", "budget/act", "scenario", "預算/實際", "版本"),
     "category": ("TSMC/non TSMC", "客戶分類", "Category"),
     "enduser": ("END USER", "EndUser", "終端客戶"),
+    "customer": ("CUSTOMER", "客戶簡稱", "客戶名稱", "客戶代號"),
     "product": ("Prod", "產品類別", "Product"),
     "supplier": ("suppiler", "supplier", "供應商"),
     "part": ("P/N", "料號", "品號"),
@@ -18,7 +19,7 @@ FIELDS = {
 }
 FIELD_LABELS = {
     "node": "分組／Tech Node", "amount": "加總金額", "scenario": "act／ori 版本",
-    "category": "客戶分類", "enduser": "END USER", "product": "產品類別",
+    "category": "客戶分類", "enduser": "END USER", "customer": "客戶（Remark 彙總）", "product": "產品類別",
     "supplier": "供應商", "part": "料號", "year": "曆年", "month": "月份",
     "date": "日期（年度／月份備援）", "remark": "原始備註",
 }

@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.formatting.rule import FormulaRule
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font, Alignment
 
 from .core import Sheet, display, is_blank, number
 from .schema import FIELDS, normalize, schema_key, suggest_mapping
@@ -26,6 +26,7 @@ REPORT_COLUMNS = ["Tech Node", "TSMC act", "TSMC ori", "Non-T act", "Non-T ori",
 YELLOW = "FFFFFFCC"
 BLUE = "FFCCFFFF"
 MAX_REPORT_ROWS = 5000
+DETAIL_COLUMNS = ["Tech Node", "客戶", "品號", "實績", "預算", "差額"]
 
 
 def formatted_number(value, decimals=0, divisor=1, multiplier=1):
@@ -65,6 +66,10 @@ class ReportConfig:
     total_mode: str = "all"
     total_row: bool = False
     label: str = ""
+    auto_remark: bool = True
+    remark_basis: str = "any_category"
+    remark_upper: float = 115.0
+    remark_lower: float = 85.0
 
     def validate(self):
         if self.year_mode not in {"all", "calendar", "fiscal"} or self.difference not in {"act-ori", "ori-act"}:
@@ -79,10 +84,14 @@ class ReportConfig:
             raise ValueError("黃色門檻須大於藍色門檻；倍率須大於 0。")
         if not isinstance(self.decimals, int) or not 0 <= self.decimals <= 6:
             raise ValueError("金額小數位必須介於 0 與 6。")
+        if self.remark_basis not in {"any_category", "total"} or not isinstance(self.auto_remark, bool):
+            raise ValueError("Remark 觸發設定無效。")
+        if not all(math.isfinite(v) for v in (self.remark_upper, self.remark_lower)) or self.remark_upper <= self.remark_lower:
+            raise ValueError("Remark 高門檻必須大於低門檻。")
         if set(self.rules) != set(CATEGORIES):
             raise ValueError("分類設定不完整。")
         for rule in self.rules.values():
-            if rule.field not in {"category", "enduser", "product", "supplier", "part"} or rule.operator not in {"equals", "contains"}:
+            if rule.field not in {"category", "enduser", "customer", "product", "supplier", "part"} or rule.operator not in {"equals", "contains"}:
                 raise ValueError("分類條件無效。")
             if not isinstance(rule.values, list) or not all(isinstance(v, str) for v in rule.values):
                 raise ValueError("分類值必須是文字清單。")
@@ -249,6 +258,7 @@ class ReportResult:
     warnings: list[str]
     counts: dict[str, int]
     sources: list[str]
+    remark_details: pd.DataFrame = dc_field(default_factory=lambda: pd.DataFrame(columns=DETAIL_COLUMNS))
 
 
 def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
@@ -260,6 +270,7 @@ def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
     category_counts = {name: 0 for name in CATEGORIES}
     sources = []
     warnings = []
+    remark_details = []
     for name, rule in config.rules.items():
         if not rule.values:
             warnings.append(f"{name} 尚未指定分類值，該分類輸出留白。")
@@ -308,7 +319,7 @@ def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
             if not math.isfinite(amount):
                 raise OverflowError("來源金額乘上倍率後超出範圍。")
             counts["used"] += 1
-            bucket = groups.setdefault(node, {"values": [[] for _ in range(8)], "remarks": []})
+            bucket = groups.setdefault(node, {"values": [[] for _ in range(8)], "remarks": [], "details": {}})
             version = 0 if scenario == config.actual.strip().casefold() else 1
             matches = [_matches(row, config.rules[name]) for name in CATEGORIES]
             if sum(matches) > 1:
@@ -319,6 +330,11 @@ def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
                     category_counts[CATEGORIES[i]] += 1
             if config.total_mode == "all" or any(matches):
                 bucket["values"][6 + version].append(amount)
+                if config.auto_remark:
+                    customer = display(row.get("customer")).strip() or "（未指定客戶）"
+                    part = display(row.get("part")).strip() or "（未指定品號）"
+                    detail = bucket["details"].setdefault((customer, part), [[], []])
+                    detail[version].append(amount)
             remark = display(row.get("remark")).strip()
             if remark and remark not in bucket["remarks"]:
                 bucket["remarks"].append(remark)
@@ -328,11 +344,72 @@ def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
             raise OverflowError("加總超出可計算範圍。")
         return result
 
-    def make_row(node, values, remarks):
+    def automatic_remark(node, values, details):
+        if not config.auto_remark:
+            return ""
+        triggers = []
+        pairs = [("Total", 6)] if config.remark_basis == "total" else [(name, i * 2) for i, name in enumerate(CATEGORIES)]
+        for name, i in pairs:
+            actual, budget = values[i], values[i + 1]
+            if actual is None or budget is None or budget == 0:
+                continue
+            ratio = actual / budget
+            if not math.isfinite(ratio):
+                raise OverflowError("Remark 比率超出可計算範圍。")
+            if ratio >= config.remark_upper / 100 or ratio <= config.remark_lower / 100:
+                triggers.append(f"{name} {formatted_number(ratio, 1, multiplier=100)}%")
+        if not triggers:
+            return ""
+        counts["remark_nodes"] = counts.get("remark_nodes", 0) + 1
+        unit = {1: "原始換算後單位", 1000: "千", 1_000_000: "百萬"}[config.display_unit]
+        direction = "實績−預算" if config.difference == "act-ori" else "預算−實績"
+        lines = ["觸發：" + "、".join(triggers), f"以下按客戶／品號彙總（單位：{unit}；差額={direction}）："]
+        aggregated = []
+        for (customer, part), detail in details.items():
+            actual = total(detail[0]) if detail[0] else 0.0
+            budget = total(detail[1]) if detail[1] else 0.0
+            delta = comparison(actual, budget, config)[0]
+            aggregated.append([node, customer, part, actual, budget, delta])
+        aggregated.sort(key=lambda row: (row[1], -abs(row[5]), row[2]))
+        remark_details.extend(aggregated)
+        if len(remark_details) > 100_000:
+            raise ValueError("Remark 彙總明細超過 100,000 列，請縮小篩選範圍。")
+        def amount_text(value):
+            for decimals in range(config.decimals, 7):
+                text = formatted_number(value, decimals, config.display_unit)
+                if value == 0 or Decimal(text.replace(",", "")) != 0:
+                    return text
+            return f"{value:g}（原始換算後金額）"
+        def totals_text(actual, budget, delta):
+            return f"實績 {amount_text(actual)}、預算 {amount_text(budget)}、差額 {'+' if delta > 0 else ''}{amount_text(delta)}"
+        customers = {}
+        for row in aggregated:
+            customers.setdefault(row[1], []).append(row)
+        text_lines = []
+        for customer, parts in customers.items():
+            actual = total([row[3] for row in parts]); budget = total([row[4] for row in parts])
+            delta = comparison(actual, budget, config)[0]
+            text_lines.append(f"客戶 {customer}：{totals_text(actual, budget, delta)}")
+            for _, _, part, actual, budget, delta in parts:
+                text_lines.append(f"  品號 {part}：{totals_text(actual, budget, delta)}")
+        for line in text_lines:
+            if sum(len(value) + 1 for value in lines) + len(line) > 29000:
+                lines.append("其餘內容詳見「Remark 明細」工作表（已保留全部彙總明細）。")
+                break
+            lines.append(line)
+        if any(row[1] == "（未指定客戶）" or row[2] == "（未指定品號）" for row in aggregated):
+            counts["remark_incomplete_nodes"] = counts.get("remark_incomplete_nodes", 0) + 1
+        return "\n".join(lines)
+
+    def make_row(node, values, remarks, details=None):
         t, n, f = (comparison(values[i], values[i + 1], config) for i in (0, 2, 4))
         zero_notes = [f"{name} ori=0，比率留白" for i, name in enumerate(CATEGORIES) if values[i * 2] is not None and values[i * 2 + 1] == 0]
-        return [node, *values, t[0], t[1], n[0], n[1], f[0], "；".join([*remarks, *zero_notes])[:32000]]
-    rows = [make_row(node, [total(v) for v in bucket["values"]], bucket["remarks"]) for node, bucket in groups.items()]
+        auto = automatic_remark(node, values, details) if details is not None else ""
+        text = "\n".join([*([auto] if auto else []), *(["來源備註：" + "；".join(remarks)] if remarks else []), *zero_notes])
+        if len(text) > 32767:
+            text = text[:32500] + "\n文字過長，完整自動彙總請見「Remark 明細」工作表。"
+        return [node, *values, t[0], t[1], n[0], n[1], f[0], text]
+    rows = [make_row(node, [total(v) for v in bucket["values"]], bucket["remarks"], bucket["details"]) for node, bucket in groups.items()]
     if config.total_row and rows:
         rows.append(make_row("總計（報表）", [total([row[i + 1] for row in rows if row[i + 1] is not None]) for i in range(8)], []))
     if len(rows) > MAX_REPORT_ROWS:
@@ -346,9 +423,11 @@ def build_report(sheets: list[Sheet], config: ReportConfig) -> ReportResult:
     for name, rule in config.rules.items():
         if rule.values and not category_counts[name]:
             warnings.append(f"{name} 未匹配任何有效明細，請檢查分類欄位或選取值。")
+    if counts.get("remark_incomplete_nodes"):
+        warnings.append(f"{counts['remark_incomplete_nodes']} 個達門檻節點的客戶／品號缺欄位或空白，Remark 以「未指定」表示；請核對來源對應。")
     if not rows:
         warnings.append("沒有可輸出的資料。請檢查來源是否只有欄名、版本值與篩選設定。")
-    return ReportResult(pd.DataFrame(rows, columns=REPORT_COLUMNS, dtype=object), warnings, counts, sources)
+    return ReportResult(pd.DataFrame(rows, columns=REPORT_COLUMNS, dtype=object), warnings, counts, sources, pd.DataFrame(remark_details, columns=DETAIL_COLUMNS, dtype=object))
 
 
 def export_report(path: str | Path, result: ReportResult, config: ReportConfig, sources: list[Sheet]):
@@ -410,11 +489,34 @@ def export_report(path: str | Path, result: ReportResult, config: ReportConfig, 
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     sheet.page_setup.fitToWidth = 1
     sheet.page_setup.fitToHeight = 0
+    if not result.remark_details.empty:
+        details = book.create_sheet("Remark 明細")
+        unit_label = {1: "原始換算後", 1000: "千", 1_000_000: "百萬"}[config.display_unit]
+        headers = ["Tech Node", "客戶", "品號", f"實績（{unit_label}）", f"預算（{unit_label}）", f"差額（{unit_label}）"]
+        for c, value in enumerate(headers, 1):
+            cell = details.cell(1, c); write(cell, value)
+            cell.fill = PatternFill("solid", fgColor="FF002060"); cell.font = Font(color="FFFFFFFF", bold=True)
+        for r, values in enumerate(result.remark_details.itertuples(index=False, name=None), 2):
+            for c, value in enumerate(values, 1):
+                cell = details.cell(r, c); write(cell, value)
+                if c >= 4: cell.number_format = amount_format
+        details.freeze_panes = "D2"
+        details.auto_filter.ref = details.dimensions
+        for column, width in {"A": 16, "B": 36, "C": 30, "D": 22, "E": 22, "F": 22}.items():
+            details.column_dimensions[column].width = width
+        for row in range(12, 12 + len(result.frame)):
+            alignment = copy(sheet.cell(row, 18).alignment)
+            alignment.wrap_text = True; alignment.vertical = "top"
+            sheet.cell(row, 18).alignment = alignment
+            line_count = str(sheet.cell(row, 18).value or "").count("\n") + 1
+            sheet.row_dimensions[row].height = min(150, max(24, 16 * line_count))
     notes = book.create_sheet("設定與檢查")
     lines = ["本報表為本機匯出快照；修改 Excel 數值不會重新計算，請在程式修改設定後重新匯出。",
              f"表頭：{config.period_label}；年度模式：{config.year_mode}；年度：{config.year}；FY 起始月：{config.fiscal_start}；月份：{config.month or '全部'}。",
              f"金額倍率：{config.multiplier}；顯示除數：{config.display_unit}（儲存格仍保留原始換算後數值）。",
              f"差額：{config.difference}；百分比：{config.percentage}；Total：{config.total_mode}。",
+             f"自動 Remark：{config.auto_remark}；依據：{config.remark_basis}；實績÷預算 ≥{config.remark_upper:g}% 或 ≤{config.remark_lower:g}%。任一分類達標時，整節點依目前 Total 納入範圍按客戶／品號彙總。零或缺值預算無法判斷門檻；明細若只有單一版本，缺少的一側以 0 計差額。",
+             "Remark 明細是自動彙總結果；主表 Remark 可能另經手動覆寫。",
              "Total all 包含所有符合期間／篩選條件且版本為 act／ori 的有效明細（含 service／未分類）；classified 僅包含分類聯集。",
              *result.sources, *result.warnings, json.dumps(result.counts, ensure_ascii=False),
              "完整設定（無原始交易列）：", json.dumps(asdict(config), ensure_ascii=False)]
@@ -433,6 +535,6 @@ def demo_sheet() -> Sheet:
     for i, node in enumerate(("2nm", "3nm", "5nm", "7nm", "16nm", "28nm"), 1):
         for category, base, ratio in (("TSMC", 100, 1.2 if i % 2 else .8), ("Non-T", 50, .8 if i % 2 else 1.2), ("FI", 20, 1.05), ("Service", 10, 1.0)):
             for scenario, value in (("ori", base), ("act", base * ratio)):
-                rows.append([node, value * i * 1_000_000, scenario, category, "Demo End User", "Service" if category == "Service" else "Product", "Demo Supplier", "DEMO-PART", 2026, 9, "示範資料，非實際業績"])
-    columns = ["Tech Node", "sales-NTD", "budget / act", "TSMC/non TSMC", "END USER", "Prod", "suppiler", "P/N", "Year(calender)", "Month(calender)", "Remark"]
+                rows.append([node, value * i * 1_000_000, scenario, category, "Demo End User", "Service" if category == "Service" else "Product", "Demo Supplier", "DEMO-PART", 2026, 9, "示範資料，非實際業績", "Demo Customer A" if category in {"TSMC", "FI"} else "Demo Customer B"])
+    columns = ["Tech Node", "sales-NTD", "budget / act", "TSMC/non TSMC", "END USER", "Prod", "suppiler", "P/N", "Year(calender)", "Month(calender)", "Remark", "CUSTOMER"]
     return Sheet(Path("示範資料.xlsx"), "示範（非實際業績）", pd.DataFrame(rows, columns=columns, dtype=object), 4)

@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QInputDialog,
+    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QInputDialog, QPlainTextEdit,
     QTableView, QVBoxLayout, QWidget,
 )
 
@@ -74,6 +74,7 @@ class ReportDialog(QDialog):
             pass
 
         self.model_class = ReportModel
+        self.frame_model_class = FrameModel
         self.sheets = sheets.copy()
         self.config = deepcopy(config) if config else suggest_config(sheets)
         self.result = None
@@ -171,7 +172,7 @@ class ReportDialog(QDialog):
             group = QGroupBox(name)
             column = QVBoxLayout(group)
             field = QComboBox()
-            for key in ("category", "enduser", "product", "supplier", "part"):
+            for key in ("category", "enduser", "customer", "product", "supplier", "part"):
                 field.addItem(FIELD_LABELS[key], key)
             operator = QComboBox()
             operator.addItem("等於任一選取值", "equals")
@@ -231,12 +232,30 @@ class ReportDialog(QDialog):
             math_grid.addWidget(QLabel(title), row, col); math_grid.addWidget(widget, row + 1, col)
         layout.addLayout(math_grid); layout.addWidget(self.total_row)
         layout.addWidget(QLabel("ori 為 0 或缺值時比率留白。顯示單位只改顯示，來源倍率會先換算金額。所有比較規則都可在此修改。"))
+        remark_group = QGroupBox("自動 Remark：節點 → 客戶 → 品號")
+        remark_grid = QGridLayout(remark_group)
+        self.auto_remark = QCheckBox("自動彙總並生成 Remark")
+        self.remark_basis = QComboBox()
+        self.remark_basis.addItem("TSMC／Non-T／FI 任一分類達門檻", "any_category")
+        self.remark_basis.addItem("Tech Node Total 達門檻", "total")
+        self.remark_upper = QDoubleSpinBox(); self.remark_upper.setRange(-100000, 100000); self.remark_upper.setSuffix(" %")
+        self.remark_lower = QDoubleSpinBox(); self.remark_lower.setRange(-100000, 100000); self.remark_lower.setSuffix(" %")
+        remark_grid.addWidget(self.auto_remark, 0, 0, 1, 2)
+        remark_grid.addWidget(self.remark_basis, 1, 0, 1, 2)
+        remark_grid.addWidget(QLabel("實績 ÷ 預算 ≥"), 2, 0); remark_grid.addWidget(self.remark_upper, 3, 0)
+        remark_grid.addWidget(QLabel("或 實績 ÷ 預算 ≤"), 2, 1); remark_grid.addWidget(self.remark_lower, 3, 1)
+        explanation = QLabel("達門檻後，整個節點依目前 Total 納入範圍按客戶、品號彙總；差額方向同上方設定。客戶欄預設對應 CUSTOMER，品號預設 P/N，可在第 1 頁改。預算為 0 或缺值時無法判斷門檻。")
+        explanation.setWordWrap(True)
+        remark_grid.addWidget(explanation, 4, 0, 1, 2)
+        layout.addWidget(remark_group)
         for combo in (self.actual, self.original, self.year_mode, self.month, self.difference, self.unit, self.total_mode):
             combo.currentIndexChanged.connect(self.changed)
         self.percentage.currentIndexChanged.connect(self.percentage_changed)
-        for spin in (self.year, self.fiscal_start, self.upper, self.lower, self.multiplier, self.decimals):
+        for spin in (self.year, self.fiscal_start, self.upper, self.lower, self.multiplier, self.decimals, self.remark_upper, self.remark_lower):
             spin.valueChanged.connect(self.changed)
         self.total_row.toggled.connect(self.changed)
+        self.auto_remark.toggled.connect(self.changed)
+        self.remark_basis.currentIndexChanged.connect(self.changed)
         self.report_label.textChanged.connect(self.changed)
         scroll.setWidget(page)
         self.tabs.addTab(scroll, "2 分類、期間與算法")
@@ -258,14 +277,26 @@ class ReportDialog(QDialog):
         for button in (edit_remark, reset_remark, open_remarks, save_remarks): remark_bar.addWidget(button)
         remark_bar.addStretch()
         layout.addLayout(remark_bar)
-        self.remark_info = QLabel("Remark 可雙擊修改並隨 Excel 匯出；另存「備註檔」可下次開啟繼續改。備註依 Tech Node 套用，改篩選後請重新核對，不存入設定檔。")
+        self.remark_info = QLabel("Remark 會自動生成，也可雙擊覆寫；手動文字會保留，按「還原」可取回自動結果。另存備註檔可下次開啟。改篩選後請重新核對；完整客戶／品號彙總可看「Remark 明細」。")
         self.remark_info.setWordWrap(True)
         layout.addWidget(self.remark_info)
         self.preview = QTableView()
         self.preview.setAlternatingRowColors(True)
         self.preview.setEditTriggers(QTableView.EditTrigger.DoubleClicked | QTableView.EditTrigger.EditKeyPressed)
         self.preview.horizontalHeader().setDefaultSectionSize(125)
-        layout.addWidget(self.preview, 1)
+        self.details_preview = QTableView()
+        self.details_preview.setAlternatingRowColors(True)
+        self.details_preview.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        self.details_preview.horizontalHeader().setDefaultSectionSize(170)
+        self.preview_tabs = QTabWidget()
+        self.preview_tabs.addTab(self.preview, "主報表")
+        self.preview_tabs.addTab(self.details_preview, "Remark 明細（原始換算後金額）")
+        layout.addWidget(self.preview_tabs, 1)
+        self.remark_text = QPlainTextEdit()
+        self.remark_text.setReadOnly(True)
+        self.remark_text.setPlaceholderText("選取 Tech Node 可在此查看完整 Remark；編輯請用上方按鈕或雙擊 Remark 格。")
+        self.remark_text.setMaximumHeight(150)
+        layout.addWidget(self.remark_text)
         self.tabs.addTab(page, "3 報表預覽")
 
     def included(self):
@@ -361,11 +392,12 @@ class ReportDialog(QDialog):
 
     def _fill_controls(self):
         old = self._updating; self._updating = True
-        for box, value in ((self.year_mode, self.config.year_mode), (self.month, self.config.month), (self.difference, self.config.difference), (self.percentage, self.config.percentage), (self.unit, self.config.display_unit), (self.total_mode, self.config.total_mode)):
+        for box, value in ((self.year_mode, self.config.year_mode), (self.month, self.config.month), (self.difference, self.config.difference), (self.percentage, self.config.percentage), (self.unit, self.config.display_unit), (self.total_mode, self.config.total_mode), (self.remark_basis, self.config.remark_basis)):
             box.setCurrentIndex(box.findData(value))
-        for box, value in ((self.year, self.config.year), (self.fiscal_start, self.config.fiscal_start), (self.upper, self.config.upper), (self.lower, self.config.lower), (self.multiplier, self.config.multiplier), (self.decimals, self.config.decimals)):
+        for box, value in ((self.year, self.config.year), (self.fiscal_start, self.config.fiscal_start), (self.upper, self.config.upper), (self.lower, self.config.lower), (self.multiplier, self.config.multiplier), (self.decimals, self.config.decimals), (self.remark_upper, self.config.remark_upper), (self.remark_lower, self.config.remark_lower)):
             box.setValue(value)
         self.total_row.setChecked(self.config.total_row); self.report_label.setText(self.config.label)
+        self.auto_remark.setChecked(self.config.auto_remark)
         self._fill_values()
         self._updating = old
 
@@ -374,11 +406,12 @@ class ReportDialog(QDialog):
         self.config.original = self.original.currentData() or ""
         for name, (field, operator, values) in self.category_controls.items():
             self.config.rules[name] = Rule(field.currentData(), operator.currentData(), [item.text() for item in values.selectedItems()])
-        for attr, box in (("year_mode", self.year_mode), ("month", self.month), ("difference", self.difference), ("percentage", self.percentage), ("display_unit", self.unit), ("total_mode", self.total_mode)):
+        for attr, box in (("year_mode", self.year_mode), ("month", self.month), ("difference", self.difference), ("percentage", self.percentage), ("display_unit", self.unit), ("total_mode", self.total_mode), ("remark_basis", self.remark_basis)):
             setattr(self.config, attr, box.currentData())
-        for attr, box in (("year", self.year), ("fiscal_start", self.fiscal_start), ("upper", self.upper), ("lower", self.lower), ("multiplier", self.multiplier), ("decimals", self.decimals)):
+        for attr, box in (("year", self.year), ("fiscal_start", self.fiscal_start), ("upper", self.upper), ("lower", self.lower), ("multiplier", self.multiplier), ("decimals", self.decimals), ("remark_upper", self.remark_upper), ("remark_lower", self.remark_lower)):
             setattr(self.config, attr, box.value())
         self.config.total_row = self.total_row.isChecked(); self.config.label = self.report_label.text()
+        self.config.auto_remark = self.auto_remark.isChecked()
         self.config.filters = {key: "" if box.currentIndex() == 0 and box.currentText() == "（全部）" else box.currentText() for key, box in self.filter_boxes.items()}
 
     def changed(self, *_args):
@@ -407,12 +440,23 @@ class ReportDialog(QDialog):
             model.on_remark = self.remark_changed
             old = self.preview.model(); model.setParent(self.preview); self.preview.setModel(model)
             if old: old.deleteLater()
+            self.preview.selectionModel().currentRowChanged.connect(self.show_remark_text)
+            if not self.result.frame.empty:
+                self.preview.setCurrentIndex(model.index(0, 0))
+            else:
+                self.remark_text.clear()
+            detail_model = self.frame_model_class(self.result.remark_details)
+            old = self.details_preview.model(); detail_model.setParent(self.details_preview); self.details_preview.setModel(detail_model)
+            if old: old.deleteLater()
             counts = self.result.counts
-            message = f"來源 {len(self.included())} 張表，共 {counts['input']:,} 筆；納入 {counts['used']:,} 筆，篩選排除 {counts['filtered']:,} 筆；輸出 {len(self.result.frame):,} 列。金額顯示除以 {self.config.display_unit:,}。"
+            message = f"來源 {len(self.included())} 張表，共 {counts['input']:,} 筆；納入 {counts['used']:,} 筆，篩選排除 {counts['filtered']:,} 筆；輸出 {len(self.result.frame):,} 列。金額顯示除以 {self.config.display_unit:,}。\n自動 Remark：{counts.get('remark_nodes', 0)} 個節點達門檻，{len(self.result.remark_details)} 筆客戶／品號彙總。"
             self.preview_info.setText(message + ("\n" + "\n".join(self.result.warnings) if self.result.warnings else "\n請核對預覽；若不是預期結果，可回前兩頁修改後再預覽。"))
         except (ValueError, OverflowError) as exc:
             old = self.preview.model(); self.preview.setModel(None)
             if old: old.deleteLater()
+            old = self.details_preview.model(); self.details_preview.setModel(None)
+            if old: old.deleteLater()
+            self.remark_text.clear()
             self.preview_info.setText(f"尚無法產生預覽：{exc}")
         self._enable_export()
 
@@ -491,6 +535,11 @@ class ReportDialog(QDialog):
         self.result.counts["manual_remarks"] = sum(self._remark_key(i, model.config, model.frame) in self.manual_remarks for i in range(len(model.frame)))
         self.confirm.setChecked(False)
         self._enable_export()
+        self.show_remark_text(model.index(row, 14))
+
+    def show_remark_text(self, index, *_args):
+        if self.result is not None and index.isValid() and index.row() < len(self.result.frame):
+            self.remark_text.setPlainText(str(self.result.frame.iat[index.row(), 14] or ""))
 
     def _selected_row(self):
         index = self.preview.currentIndex()

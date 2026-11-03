@@ -60,6 +60,70 @@ def test_demo_aggregates_service_and_compares_without_sending_data():
     assert build_report([source], config).frame.iloc[0]["Total act"] == 181_000_000
 
 
+def test_auto_remark_follows_node_customer_part_hierarchy_and_all_triggered_nodes():
+    source = demo_sheet(); config = suggest_config([source])
+    result = build_report([source], config)
+    assert result.counts["remark_nodes"] == 6
+    assert len(result.remark_details) == 12
+    assert result.frame["Remark"].str.contains("觸發：").all()
+    text = result.frame.iloc[0]["Remark"]
+    assert "TSMC 120.0%、Non-T 80.0%" in text
+    assert "客戶 Demo Customer A：實績 141、預算 120、差額 +21" in text
+    assert "品號 DEMO-PART：實績 141、預算 120、差額 +21" in text
+    assert "客戶 Demo Customer B：實績 50、預算 60、差額 -10" in text
+    assert result.remark_details.iloc[0]["差額"] == 21_000_000
+    # A class can breach a threshold even while the node's Total stays in range.
+    config.remark_basis = "total"
+    assert build_report([source], config).counts.get("remark_nodes", 0) == 0
+
+
+@pytest.mark.parametrize("actual,expected", [(115, True), (85, True), (114.99, False), (85.01, False)])
+def test_remark_inclusive_ratio_thresholds(actual, expected):
+    source = Sheet(Path("boundary.xlsx"), "data", pd.DataFrame({
+        "Tech Node": ["3nm"] * 2, "Amount": [actual, 100], "scenario": ["act", "ori"],
+        "Category": ["TSMC"] * 2, "CUSTOMER": ["Customer A"] * 2, "P/N": ["P1"] * 2,
+    }, dtype=object))
+    config = suggest_config([source])
+    config.percentage = "change"; config.upper = 15; config.lower = -15
+    result = build_report([source], config)
+    assert bool(result.counts.get("remark_nodes")) is expected
+
+
+def test_fi_alone_can_trigger_and_part_sums_combine_multiple_files():
+    data = pd.DataFrame({
+        "Tech Node": ["3nm"] * 8,
+        "Amount": [100, 100, 100, 100, 30, 20, 10, 10],
+        "scenario": ["act", "ori"] * 4,
+        "Category": ["TSMC", "TSMC", "Non-T", "Non-T", "FI", "FI", "Service", "Service"],
+        "CUSTOMER": ["Customer A"] * 6 + ["Customer B"] * 2,
+        "P/N": ["P1"] * 4 + ["P2"] * 4,
+    }, dtype=object)
+    sources = [Sheet(Path("first.xlsx"), "data", data.iloc[::2]), Sheet(Path("second.xlsx"), "data", data.iloc[1::2])]
+    config = suggest_config(sources); result = build_report(sources, config)
+    assert result.frame.iloc[0]["Remark"].splitlines()[0] == "觸發：FI 150.0%"
+    details = result.remark_details
+    assert details.loc[(details["客戶"] == "Customer A") & (details["品號"] == "P1"), "實績"].item() == 200
+    assert details.loc[(details["客戶"] == "Customer A") & (details["品號"] == "P2"), "差額"].item() == 10
+
+
+def test_long_remarks_keep_every_customer_part_in_detail_sheet(tmp_path):
+    rows = []
+    for i in range(500):
+        for version, amount in (("act", 2), ("ori", 1)):
+            rows.append(["3nm", amount, version, "TSMC", "Customer A", f"P{i:04d}-" + "x" * 80])
+    source = Sheet(Path("long.xlsx"), "data", pd.DataFrame(rows, columns=["Tech Node", "Amount", "scenario", "Category", "CUSTOMER", "P/N"], dtype=object))
+    config = suggest_config([source]); config.display_unit = 1
+    result = build_report([source], config)
+    assert len(result.remark_details) == 500
+    assert len(result.frame.iloc[0]["Remark"]) <= 32767
+    assert "完整" not in result.frame.iloc[0]["Remark"] or "明細" in result.frame.iloc[0]["Remark"]
+    assert "其餘內容詳見" in result.frame.iloc[0]["Remark"]
+    path = tmp_path / "detail.xlsx"; export_report(path, result, config, [source])
+    book = load_workbook(path)
+    assert book["Remark 明細"].max_row == 501
+    book.close()
+
+
 def test_multi_file_mappings_and_overlapping_rules_do_not_double_total():
     first = demo_sheet()
     second = Sheet(Path("other.xlsx"), "other", first.data.rename(columns={"sales-NTD": "Amount"}).copy())

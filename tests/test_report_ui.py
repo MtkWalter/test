@@ -94,6 +94,7 @@ def test_manual_remarks_edit_preserve_reconfirm_export_and_reset(qapp, tmp_path,
     book.close()
     widget.preview.setCurrentIndex(widget.preview.model().index(0, 0))
     widget.reset_remark()
-    assert widget.result.frame.iloc[0]["Remark"] == "示範資料，非實際業績"
+    assert "觸發：TSMC 120.0%" in widget.result.frame.iloc[0]["Remark"]
+    assert "示範資料，非實際業績" in widget.result.frame.iloc[0]["Remark"]
     assert not widget.confirm.isChecked()
     widget.close()

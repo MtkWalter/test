@@ -2,12 +2,13 @@
   "version": 1,
   "settings": {
     "mappings": {
-      "7fb5e0121158acbd13af06a30c6785bd0842102766e3a4b6e202a6175bf1cc73": {
+      "d1127a6a110238ae84ae319dc5d777dace65156dc7292b2db749cb51bdf60a78": {
         "node": "Tech Node",
         "amount": "sales-NTD",
         "scenario": "budget / act",
         "category": "TSMC/non TSMC",
         "enduser": "END USER",
+        "customer": "CUSTOMER",
         "product": "Prod",
         "supplier": "suppiler",
         "part": "P/N",
@@ -56,6 +57,10 @@
     "decimals": 0,
     "total_mode": "all",
     "total_row": false,
-    "label": ""
+    "label": "",
+    "auto_remark": true,
+    "remark_basis": "any_category",
+    "remark_upper": 115.0,
+    "remark_lower": 85.0
   }
 }

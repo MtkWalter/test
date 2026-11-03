@@ -465,6 +465,8 @@ def main() -> int:
             demo = demo_sheet()
             config = suggest_config([demo])
             result = build_report([demo], config)
+            if result.counts.get("remark_nodes") != 6 or len(result.remark_details) != 12:
+                raise ValueError("Automatic Remark aggregation did not match the demo")
             report_path = args.smoke_output.with_suffix(".xlsx")
             export_report(report_path, result, config, [demo])
             designer = ReportDialog([demo], config)
@@ -481,6 +483,8 @@ def main() -> int:
             designer.close()
             report["template_report_rows"] = len(result.frame)
             report["template_report_first_total"] = result.frame.iloc[0]["Total act"]
+            report["auto_remark_nodes"] = result.counts.get("remark_nodes", 0)
+            report["remark_detail_rows"] = len(result.remark_details)
             args.smoke_output.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
             window.close()
             return 0
