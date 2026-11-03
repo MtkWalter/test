@@ -167,9 +167,16 @@ def test_template_export_reopens_with_values_styles_rules_and_no_injected_formul
     assert "M10:N10" in [str(value) for value in sheet.merged_cells.ranges]
     assert sheet["N12"].value is None  # No ori for this distinct source group.
     assert "設定與檢查" in book.sheetnames
+    assert sheet["K10"].value == "Total (service incl.)"
     rules = [rule.formula[0] for rules in sheet.conditional_formatting._cf_rules.values() for rule in rules]
     assert any("$N12>=1.15" in formula for formula in rules)
     assert not any("$L12>=1.15" in formula for formula in rules)
+    book.close()
+    config.total_mode = "classified"
+    classified_path = tmp_path / "classified.xlsx"
+    export_report(classified_path, build_report([source], config), config, [source])
+    book = load_workbook(classified_path)
+    assert book.active["K10"].value == "Total (classified)"
     book.close()
     with pytest.raises(ValueError, match="覆寫"): export_report(source.path, result, config, [source])
 

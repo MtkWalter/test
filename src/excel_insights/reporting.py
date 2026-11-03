@@ -334,6 +334,7 @@ def export_report(path: str | Path, result: ReportResult, config: ReportConfig, 
         if isinstance(value, str):
             cell.data_type = "s"  # Never execute source text as Excel formulas.
     write(sheet["E9"], calendar.month_abbr[config.month] if config.month else "All months")
+    write(sheet["K10"], "Total (service incl.)" if config.total_mode == "all" else "Total (classified)")
     for col in range(5, 13):
         write(sheet.cell(11, col), f"{config.period_label} {'act' if col % 2 else 'ori'}")
     difference_label = "act − ori" if config.difference == "act-ori" else "ori − act"
