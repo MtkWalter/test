@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from .core import Sheet, is_blank
 from .reporting import (
     BLUE, CATEGORIES, YELLOW, ReportConfig, Rule, build_report, comparison,
-    demo_sheet, export_report, load_config, observed_values, save_config, suggest_config,
+    demo_sheet, export_report, formatted_number, load_config, observed_values, save_config, suggest_config,
 )
 from .schema import FIELD_LABELS, FIELDS, schema_key
 
@@ -27,9 +27,9 @@ class ReportModelMixin:
             if is_blank(value):
                 return ""
             if index.column() in {10, 12}:
-                return f"{value:.0%}"
+                return formatted_number(value, multiplier=100) + "%"
             if 1 <= index.column() <= 13:
-                return f"{value / self.config.display_unit:,.{self.config.decimals}f}"
+                return formatted_number(value, self.config.decimals, self.config.display_unit)
         if role == Qt.ItemDataRole.BackgroundRole and index.isValid():
             column = index.column()
             rate = None

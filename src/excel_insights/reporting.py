@@ -7,6 +7,7 @@ import math
 from copy import copy
 from dataclasses import asdict, dataclass, field as dc_field
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from importlib.resources import files
 from pathlib import Path
 
@@ -25,6 +26,15 @@ REPORT_COLUMNS = ["Tech Node", "TSMC act", "TSMC ori", "Non-T act", "Non-T ori",
 YELLOW = "FFFFFFCC"
 BLUE = "FFCCFFFF"
 MAX_REPORT_ROWS = 5000
+
+
+def formatted_number(value, decimals=0, divisor=1, multiplier=1):
+    """Match Excel's displayed half-up rounding, including negative amounts."""
+    with localcontext() as context:
+        context.prec = 400  # Enough for any finite double, with display decimals.
+        scaled = Decimal(str(value)) * Decimal(multiplier) / Decimal(divisor)
+        rounded = scaled.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+        return f"{rounded:,.{decimals}f}"
 
 
 @dataclass

@@ -8,7 +8,7 @@ from openpyxl import Workbook, load_workbook
 
 from excel_insights.core import Sheet, read_workbook
 from excel_insights.reporting import (
-    Rule, build_report, demo_sheet, export_report, load_config, save_config, suggest_config,
+    Rule, build_report, demo_sheet, export_report, formatted_number, load_config, save_config, suggest_config,
 )
 from excel_insights.schema import schema_key
 
@@ -27,6 +27,12 @@ def test_detects_realistic_fourth_row_header_and_manual_override(tmp_path):
     assert len(actual.data) == 1
     assert actual.data.iloc[0]["Tech Node"] == "3nm"
     assert read_workbook(path, header_row=1)[0].header_row == 1
+
+
+def test_display_rounding_matches_excel_at_half_values():
+    assert formatted_number(12_500_000, divisor=1_000_000) == "13"
+    assert formatted_number(-12_500_000, divisor=1_000_000) == "-13"
+    assert formatted_number(1.145, multiplier=100) == "115"
 
 
 def test_demo_aggregates_service_and_compares_without_sending_data():
