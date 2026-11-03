@@ -1,61 +1,87 @@
-# Excel Insights — Windows Excel 統計工作台
+# Excel Insights — Python Excel 統計工作台
 
-繁體中文 Windows 桌面初版，以 C# / .NET 8 WPF 開發。可一次匯入多個 Excel，切換工作表、預覽、文字篩選、依欄位分組並匯出統計。資料在本機處理，不上傳，亦不修改來源檔案；不需要安裝 Microsoft Excel。
+這是原 C# / WPF 初版的 Python 替代實作（v0.2.0）。使用 **PySide6 + pandas**，保留繁體中文桌面操作、多個 Excel 匯入、工作表切換、預覽、文字篩選、分組統計及 CSV 匯出。資料全程在本機處理，不上傳、不修改來源檔，也不需要安裝 Microsoft Excel。
 
-## 在 Windows 使用
+## Windows 開發：先執行，再打包
 
-使用 Windows 10 / 11 x64。開啟發行包中的 `ExcelInsights.App.exe` 即可；獨立發行版本已包含 .NET Runtime。程式尚未進行程式碼簽章，請依來源與組織政策判斷是否執行。
+1. 安裝 **Python 3.12 x64**，勾選「Add python.exe to PATH」。支援 Python 3.11–3.13。
+2. 下載或 clone 本儲存庫原始碼，解壓縮到例如 `C:\ExcelInsights`。
+3. 第一次雙擊 `setup.bat`，建立隔離環境並安裝套件。
+4. 雙擊 `run.bat` 開啟桌面程式。
+5. 用 VS Code 或其他編輯器修改 `src/excel_insights/` 的 Python 檔案；關閉程式後重新執行 `run.bat` 即可看到修改。這個流程不必每次重新打包 EXE，也不會自動熱更新正在執行的視窗。
 
-1. 點「匯入 Excel 檔案」多選檔案，或將檔案拖至視窗。支援 `.xlsx`、`.xls`、`.xlsb`。
-2. 左側選取一張工作表。**各檔案與工作表分開分析，目前不自動合併。**
-3. 選擇數值欄位，例如「金額」；分組欄位可選「地區」。
-4. 選擇篩選欄位，輸入包含文字（不分大小寫）；清除文字即恢復全部。
-5. 查看筆數、有效數值、空白、非數值、總和、平均、最小值及最大值。
-6. 點「匯出統計 CSV」，儲存含來源、欄位與篩選條件的結果。CSV 使用 UTF-8 BOM，可由 Excel 開啟，並對文字中的公式前綴加上保護。
-
-### 範例驗證
-
-`samples/` 含兩個小型 Excel 檔案，可同時匯入。一月「銷售明細」選取金額、不分組，應得到：6 筆、4 個有效數值、1 個空白、1 個非數值；總和 **11,100**、平均 **2,775**、最小 **1,200**、最大 **6,000**。
-
-再選地區分組，台北為 3 筆、2 個有效數值、1 個空白，總和 **8,400**、平均 **4,200**。若以地區篩選「台北」，所有統計只計算這 3 列。
-
-## 計算規則與初版範圍
-
-- 第一列視為欄名；空白欄名自動命名，重複欄名加編號。完全空白的資料列略過。
-- Excel 的數值與可解析的數字文字納入計算；文字採小數點 `.`、千分位 `,`（如 `1,234.50`），不依電腦地區改變。
-- 日期、布林值、一般文字、帶貨幣或百分比符號的文字不納入數值統計。Excel 原生百分比以儲存的比例計算，例如 50% 為 0.5。
-- 空白與非數值分開計數。沒有有效數值時，總和、平均與極值留空；畫面顯示小數 2 位，CSV 保留計算精度。採 double 運算，並非財務用精確小數引擎。
-- 公式只讀取 Excel 檔案內已儲存的計算結果，不重新計算公式。加密檔案與損壞檔案會報錯，不影響其他檔案匯入。
-- 預覽最多 5,000 列；統計計算所有篩選後資料。每次最多選 20 檔、每表最多 100,000 列 / 512 欄、每檔掃描最多 1,000,000 儲存格、已載入資料最多 2,000,000 儲存格。超限時整檔拒絕，不以截斷資料進行統計。
-- 尚未包含跨檔合併、圖表、自訂公式、Excel 格式報表、安裝精靈及自動更新。
-
-## 開發與建置
-
-安裝 .NET 8 SDK（8.0.400 以上），在儲存庫根目錄執行：
+也可在儲存庫根目錄使用 PowerShell：
 
 ```powershell
-dotnet test tests/ExcelInsights.Tests/ExcelInsights.Tests.csproj -c Release
-dotnet run --project src/ExcelInsights.App/ExcelInsights.App.csproj
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m excel_insights
 ```
 
-產生不需另外安裝 .NET 的 Windows x64 單一執行檔：
+若要使用完整鎖定的相依版本，可安裝 uv 後執行 `uv sync --locked --extra dev`，再用 `uv run --no-sync python -m excel_insights`。`uv.lock` 也用於雲端與 Windows CI。
+
+## 使用方式
+
+1. 點「匯入 Excel 檔案」一次多選，或把檔案拖到視窗。
+2. 左側選取工作表。**各工作表分開分析，尚未自動跨檔合併。**
+3. 選數值欄位，例如「金額」；需要時選分組欄位，例如「地區」。
+4. 選篩選欄位並輸入包含文字（不分大小寫）；清除文字以恢復全部。
+5. 查看資料筆數、有效數值、空白、非數值、總和、平均、最小值與最大值。
+6. 點「匯出統計 CSV」。結果包含檔名、工作表、數值欄位、分組及篩選條件，使用 UTF-8 BOM，可用 Excel 開啟。文字中的公式前綴會加上保護。
+
+匯入在背景執行；損壞檔案會個別顯示錯誤，其他檔案可繼續匯入。匯入期間請等待完成後再關閉視窗。資料不會在關閉程式後自動保留。
+
+### 範例
+
+同時匯入 `samples/` 的兩個檔案，左側應有 3 張工作表。
+
+一月「銷售明細」選金額、不分組：6 筆、4 個有效數值、1 個空白、1 個非數值，總和 **11,100**、平均 **2,775**、最小 **1,200**、最大 **6,000**。
+
+依地區分組，台北為 3 筆、2 個有效數值、1 個空白，總和 **8,400**、平均 **4,200**。地區篩選「台北」時只計算這 3 列。
+
+## 打包 Windows EXE
+
+在 **Windows** 完成上述安裝後，在 PowerShell 執行：
 
 ```powershell
 ./scripts/publish-windows.ps1
 ```
 
-輸出在 `artifacts/windows/`。可用 Visual Studio 2022 開啟 `ExcelInsights.sln`，安裝「.NET 桌面開發」工作負載，將 App 設為啟始專案。
+腳本會先執行測試，使用 PyInstaller 建立 `ExcelInsights.exe`，再實際啟動打包後的程式，以範例 Excel 驗證 Qt 初始化、檔案讀取與統計結果。成功後產生：
 
-核心測試可在 Linux 執行。WPF 視窗需在 Windows 操作驗證；Linux 可利用專案中的 `EnableWindowsTargeting` 交叉建置。`.github/workflows/windows.yml` 可在 GitHub Windows runner 測試及發行，執行成功後提供下載產物。
+- `artifacts/ExcelInsights-Python-Windows-x64.zip`：EXE、使用說明及範例檔。
+- `artifacts/Python-SHA256SUMS.txt`：壓縮包校驗碼。
+- `artifacts/python-smoke.json`：打包後程式的檢查結果。
 
-重新產生示範 Excel：`python scripts/create-samples.py`，僅使用 Python 標準函式庫。
+使用者只需解壓縮並執行 `ExcelInsights.exe`，不必安裝 Python。程式尚未簽章，首次啟動可能因單檔解壓縮而較慢。
 
-## Windows 手動驗收
+若 PowerShell 的組織政策不允許執行腳本，請使用符合組織政策的方式執行，或透過 GitHub Actions 取得打包檔案。
 
-- 同時匯入兩個範例，確認左側三張工作表可切換，預覽與統計隨選取更新。
-- 依上方範例核對統計；套用與清除篩選、變更分組，確認結果即時更新。
-- 匯出 CSV，用 Excel 開啟，確認中文、欄位與數值；取消匯出不產生檔案。
-- 匯入無效 `.xlsx`、重複檔案；移除工作表與清除全部，確認可繼續操作。
-- 將檔案拖入視窗，並測試縮放與長欄名。
+推送後，GitHub Actions 的 **Python Windows build and test** 會在 Windows runner 測試與打包。執行成功後，登入 GitHub，在該次執行頁面下方下載 **ExcelInsights-Python-windows-x64** artifact，再解開裡面的程式壓縮包。這與舊版的 `ExcelInsights-windows-x64` artifact 不同。
 
-此驗收清單需要 Windows 執行，不代表已在 Linux 完成 GUI 驗證。
+## 格式與計算規則
+
+- `.xlsx` 使用 openpyxl、`.xls` 使用 xlrd、`.xlsb` 使用 pyxlsb。不支援加密檔。
+- 首列為欄名；空白欄名自動命名，重複欄名加編號。全空白資料列略過；字串 `NA` 等仍保留為文字。
+- 數值與可解析的數字文字納入計算，例如 `1,234.50`、`-5`、`2e3`；使用小數點 `.` 與千分位 `,`，不依作業系統地區改變。
+- 日期、布林、一般文字、貨幣與百分比文字不列入有效數值。原生百分比依儲存比例計算，例如 50% 為 0.5。**pyxlsb 無法可靠辨識日期格式，XLSB 日期可能作為 Excel 序號數值呈現；需要日期辨識時請先存成 XLSX。**
+- 空白與非數值分開計數；沒有有效數值時總和、平均及極值留空。畫面顯示 2 位小數，CSV 保留計算精度。採浮點運算，不適合要求精確小數的財務結算。
+- 公式只讀取檔案已儲存的結果，不重新計算。公式未儲存結果時可能為空白。
+- 預覽最多 5,000 列，統計使用所有篩選後資料。每次最多選取 20 檔、每表 100,000 資料列 / 512 欄、每檔掃描及保留最多 1,000,000 儲存格、總載入最多 2,000,000 儲存格。Excel 的空白或格式範圍也可能觸及限制；超限會整檔拒絕，不以截斷資料統計。
+- 尚未包含跨檔合併、圖表、自訂公式、Excel 格式報表、安裝精靈與自動更新。
+
+## 測試與專案結構
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+測試包含真正的 XLSX / XLS 讀取、原始範例計算、型別保留、資源上限、CSV 回讀，以及 Qt 視窗中的背景匯入、篩選、分組、匯出與移除操作。XLSB 引擎有包含在打包中，仍需以實際 XLSB 檔案驗收。
+
+- `src/excel_insights/core.py`：Excel 讀取、篩選、統計與 CSV。
+- `src/excel_insights/app.py`：PySide6 視窗、背景匯入與表格模型。
+- `tests/`：資料與 Qt 整合測試。
+- `scripts/publish-windows.ps1`：Windows 打包與 EXE 自我檢查。
+- `scripts/create-samples.py`：僅用 Python 標準函式庫產生範例 Excel。
+
+Linux 可直接開發並執行 PySide6；沒有顯示器的雲端環境可用 `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` 驗證真正的 Qt 介面。Windows EXE 必須在 Windows 打包；離屏測試不代表已完成 Windows 實際桌面視覺驗收。
