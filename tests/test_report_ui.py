@@ -55,3 +55,36 @@ def test_category_values_can_be_changed_without_writing_rules(qapp):
     QTest.qWait(350); qapp.processEvents()
     assert widget.result.frame.iloc[0]["FI act"] == 10_000_000
     widget.close()
+
+
+def test_manual_remarks_edit_preserve_reconfirm_export_and_reset(qapp, tmp_path, monkeypatch):
+    import json
+    widget = ReportDialog([demo_sheet()]); widget.show(); widget.tabs.setCurrentIndex(2)
+    qapp.processEvents()
+    model = widget.preview.model()
+    assert model.flags(model.index(0, 14)) & Qt.ItemFlag.ItemIsEditable
+    assert not model.flags(model.index(0, 1)) & Qt.ItemFlag.ItemIsEditable
+    widget.confirm.setChecked(True)
+    text = "=這是手動備註\n下季追蹤"
+    assert model.setData(model.index(0, 14), text)
+    assert not widget.confirm.isChecked()
+    assert not widget.export_button.isEnabled()
+    widget.multiplier.setValue(.001)
+    QTest.qWait(350); qapp.processEvents()
+    assert widget.result.frame.iloc[0]["Remark"] == text
+    preset = tmp_path / "settings.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(preset), "JSON"))
+    widget.save_settings()
+    assert text not in json.dumps(json.loads(preset.read_text()), ensure_ascii=False)
+    path = tmp_path / "with-remark.xlsx"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(path), "Excel"))
+    widget.confirm.setChecked(True); widget.export_button.click()
+    book = load_workbook(path)
+    assert book.active["R12"].value == text
+    assert book.active["R12"].data_type == "s"
+    book.close()
+    widget.preview.setCurrentIndex(widget.preview.model().index(0, 0))
+    widget.reset_remark()
+    assert widget.result.frame.iloc[0]["Remark"] == "示範資料，非實際業績"
+    assert not widget.confirm.isChecked()
+    widget.close()

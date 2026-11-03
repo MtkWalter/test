@@ -472,6 +472,12 @@ def main() -> int:
             app.processEvents()
             if designer.result is None or designer.result.frame.empty:
                 raise ValueError("Report designer produced no preview")
+            designer.confirm.setChecked(True)
+            model = designer.preview.model()
+            if not model.setData(model.index(0, 14), "smoke Remark") or designer.confirm.isChecked():
+                raise ValueError("Remark editing did not update the preview confirmation")
+            export_report(report_path, designer.result, designer.config, [demo])
+            report["manual_remark"] = designer.result.frame.iat[0, 14]
             designer.close()
             report["template_report_rows"] = len(result.frame)
             report["template_report_first_total"] = result.frame.iloc[0]["Total act"]

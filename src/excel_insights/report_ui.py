@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QInputDialog,
     QTableView, QVBoxLayout, QWidget,
 )
 
@@ -23,6 +23,8 @@ class ReportModelMixin:
     """Color only the same comparison cells that Excel colors."""
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         value = self.frame.iat[index.row(), index.column()] if index.isValid() else None
+        if role == Qt.ItemDataRole.EditRole and index.isValid() and index.column() == 14:
+            return "" if is_blank(value) else str(value)
         if role == Qt.ItemDataRole.DisplayRole and index.isValid():
             if is_blank(value):
                 return ""
@@ -46,6 +48,21 @@ class ReportModelMixin:
                     return QColor("#" + BLUE[-6:])
         return super().data(index, role)
 
+    def flags(self, index):
+        flags = super().flags(index)
+        return flags | Qt.ItemFlag.ItemIsEditable if index.isValid() and index.column() == 14 else flags
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.column() != 14:
+            return False
+        text = str(value)
+        if len(text) > 32767:
+            return False
+        self.frame.iat[index.row(), 14] = text
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
+        self.on_remark(index.row(), text)
+        return True
+
 
 class ReportDialog(QDialog):
     def __init__(self, sheets: list[Sheet], config: ReportConfig | None = None, parent=None):
@@ -59,6 +76,7 @@ class ReportDialog(QDialog):
         self.sheets = sheets.copy()
         self.config = deepcopy(config) if config else suggest_config(sheets)
         self.result = None
+        self.manual_remarks = {}
         self._updating = True
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -227,9 +245,19 @@ class ReportDialog(QDialog):
         self.preview_info = QLabel(); self.preview_info.setWordWrap(True)
         self.preview_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.preview_info)
+        remark_bar = QHBoxLayout()
+        edit_remark = QPushButton("編輯選取列 Remark（可多行）")
+        edit_remark.clicked.connect(self.edit_remark)
+        reset_remark = QPushButton("還原選取列 Remark")
+        reset_remark.clicked.connect(self.reset_remark)
+        remark_bar.addWidget(edit_remark); remark_bar.addWidget(reset_remark); remark_bar.addStretch()
+        layout.addLayout(remark_bar)
+        self.remark_info = QLabel("Remark 可雙擊修改。手動備註依 Tech Node 在此視窗保留；改篩選後請重新核對。關閉前請匯出，不存入設定 JSON。")
+        self.remark_info.setWordWrap(True)
+        layout.addWidget(self.remark_info)
         self.preview = QTableView()
         self.preview.setAlternatingRowColors(True)
-        self.preview.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        self.preview.setEditTriggers(QTableView.EditTrigger.DoubleClicked | QTableView.EditTrigger.EditKeyPressed)
         self.preview.horizontalHeader().setDefaultSectionSize(125)
         layout.addWidget(self.preview, 1)
         self.tabs.addTab(page, "3 報表預覽")
@@ -367,8 +395,10 @@ class ReportDialog(QDialog):
             self.period_info.setText("年度及月份依對應的曆年／月份欄位判讀，缺少時使用日期欄位。不限制期間時不猜測會計年度。")
         try:
             self.result = build_report(self.included(), self.config)
+            self._apply_remarks()
             model = self.model_class(self.result.frame)
             model.config = deepcopy(self.config)
+            model.on_remark = self.remark_changed
             old = self.preview.model(); model.setParent(self.preview); self.preview.setModel(model)
             if old: old.deleteLater()
             counts = self.result.counts
@@ -386,6 +416,7 @@ class ReportDialog(QDialog):
     def load_demo(self):
         if self.sheets and QMessageBox.question(self, "載入示範", "在此預覽視窗改用虛構示範資料？主畫面已匯入的檔案會保留。") != QMessageBox.StandardButton.Yes:
             return
+        if not self._discard_remarks(): return
         self._updating = True
         self.sheets = [demo_sheet()]; self.config = suggest_config(self.sheets)
         self.config.year_mode = "fiscal"; self.config.year = 2027; self.config.fiscal_start = 4; self.config.month = 9
@@ -399,6 +430,7 @@ class ReportDialog(QDialog):
         if not path: return
         try:
             config = load_config(path)
+            if not self._discard_remarks(): return
             self._updating = True; self.config = config
             self._populate_sources(); self._fill_controls(); self._updating = False
             self.refresh_preview()
@@ -431,3 +463,56 @@ class ReportDialog(QDialog):
         self._timer.stop()
         self._collect_controls()
         super().done(code)
+
+    def _remark_key(self, row, config=None, frame=None):
+        config = config or self.config
+        frame = self.result.frame if frame is None else frame
+        is_total = config.total_row and row == len(frame) - 1
+        return ("total" if is_total else "node", frame.iat[row, 0])
+
+    def _apply_remarks(self):
+        count = 0
+        for row in range(len(self.result.frame)):
+            key = self._remark_key(row)
+            if key in self.manual_remarks:
+                self.result.frame.iat[row, 14] = self.manual_remarks[key]
+                count += 1
+        self.result.counts["manual_remarks"] = count
+
+    def remark_changed(self, row, text):
+        model = self.preview.model()
+        self.manual_remarks[self._remark_key(row, model.config, model.frame)] = text
+        self.result.counts["manual_remarks"] = sum(self._remark_key(i, model.config, model.frame) in self.manual_remarks for i in range(len(model.frame)))
+        self.confirm.setChecked(False)
+        self._enable_export()
+
+    def _selected_row(self):
+        index = self.preview.currentIndex()
+        if self.result is None or self.result.frame.empty: return None
+        if index.isValid(): return index.row()
+        QMessageBox.information(self, "選取報表列", "請先點選要修改備註的 Tech Node 那一列。")
+        return None
+
+    def edit_remark(self):
+        row = self._selected_row()
+        if row is None: return
+        value = self.result.frame.iat[row, 14]
+        text, accepted = QInputDialog.getMultiLineText(self, f"Remark · {self.result.frame.iat[row, 0]}", "輸入此列備註（只影響輸出，不修改來源檔）：", "" if is_blank(value) else str(value))
+        if not accepted: return
+        if len(text) > 32767:
+            QMessageBox.warning(self, "備註過長", "Excel 每格最多 32,767 字，請縮短備註。")
+            return
+        self.preview.model().setData(self.preview.model().index(row, 14), text)
+
+    def reset_remark(self):
+        row = self._selected_row()
+        if row is None: return
+        model = self.preview.model()
+        self.manual_remarks.pop(self._remark_key(row, model.config, model.frame), None)
+        self.refresh_preview()
+
+    def _discard_remarks(self):
+        if self.manual_remarks and QMessageBox.question(self, "切換設定／示範", "切換會清除本次手動 Remark。請先匯出以保留，是否繼續？") != QMessageBox.StandardButton.Yes:
+            return False
+        self.manual_remarks.clear()
+        return True
