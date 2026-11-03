@@ -15,6 +15,7 @@ from .core import Sheet, is_blank
 from .reporting import (
     BLUE, CATEGORIES, YELLOW, ReportConfig, Rule, build_report, comparison,
     demo_sheet, export_report, formatted_number, load_config, observed_values, save_config, suggest_config,
+    load_remark_file, remark_context, save_remark_file,
 )
 from .schema import FIELD_LABELS, FIELDS, schema_key
 
@@ -250,9 +251,14 @@ class ReportDialog(QDialog):
         edit_remark.clicked.connect(self.edit_remark)
         reset_remark = QPushButton("還原選取列 Remark")
         reset_remark.clicked.connect(self.reset_remark)
-        remark_bar.addWidget(edit_remark); remark_bar.addWidget(reset_remark); remark_bar.addStretch()
+        open_remarks = QPushButton("開啟備註檔")
+        open_remarks.clicked.connect(self.open_remarks)
+        save_remarks = QPushButton("儲存備註檔")
+        save_remarks.clicked.connect(self.save_remarks)
+        for button in (edit_remark, reset_remark, open_remarks, save_remarks): remark_bar.addWidget(button)
+        remark_bar.addStretch()
         layout.addLayout(remark_bar)
-        self.remark_info = QLabel("Remark 可雙擊修改。手動備註依 Tech Node 在此視窗保留；改篩選後請重新核對。關閉前請匯出，不存入設定 JSON。")
+        self.remark_info = QLabel("Remark 可雙擊修改並隨 Excel 匯出；另存「備註檔」可下次開啟繼續改。備註依 Tech Node 套用，改篩選後請重新核對，不存入設定檔。")
         self.remark_info.setWordWrap(True)
         layout.addWidget(self.remark_info)
         self.preview = QTableView()
@@ -512,7 +518,32 @@ class ReportDialog(QDialog):
         self.refresh_preview()
 
     def _discard_remarks(self):
-        if self.manual_remarks and QMessageBox.question(self, "切換設定／示範", "切換會清除本次手動 Remark。請先匯出以保留，是否繼續？") != QMessageBox.StandardButton.Yes:
+        if self.manual_remarks and QMessageBox.question(self, "切換設定／示範", "切換會清除本次手動 Remark。請先匯出或另存備註檔，是否繼續？") != QMessageBox.StandardButton.Yes:
             return False
         self.manual_remarks.clear()
         return True
+
+    def save_remarks(self):
+        self._collect_controls()
+        path, _ = QFileDialog.getSaveFileName(self, "儲存本機備註檔（含 Tech Node 及手動文字）", "report-remarks.json", "JSON 備註 (*.json)")
+        if not path: return
+        if not path.lower().endswith(".json"): path += ".json"
+        try:
+            save_remark_file(path, self.manual_remarks, self.config)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "無法儲存備註", str(exc))
+
+    def open_remarks(self):
+        path, _ = QFileDialog.getOpenFileName(self, "開啟本機備註檔", "", "JSON 備註 (*.json)")
+        if not path: return
+        try:
+            context, remarks = load_remark_file(path)
+            self._collect_controls()
+            if context != remark_context(self.config) and QMessageBox.question(self, "備註期間／篩選不同", "此備註檔的期間或篩選與目前不同。仍要依 Tech Node 套用嗎？請重新核對內容。") != QMessageBox.StandardButton.Yes:
+                return
+            if self.manual_remarks and QMessageBox.question(self, "取代手動備註", "以備註檔取代目前的手動 Remark？") != QMessageBox.StandardButton.Yes:
+                return
+            self.manual_remarks = remarks
+            self.refresh_preview()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "無法開啟備註", str(exc))

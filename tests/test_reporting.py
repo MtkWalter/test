@@ -9,6 +9,7 @@ from openpyxl import Workbook, load_workbook
 from excel_insights.core import Sheet, read_workbook
 from excel_insights.reporting import (
     Rule, build_report, demo_sheet, export_report, formatted_number, load_config, save_config, suggest_config,
+    load_remark_file, remark_context, save_remark_file,
 )
 from excel_insights.schema import schema_key
 
@@ -33,6 +34,17 @@ def test_display_rounding_matches_excel_at_half_values():
     assert formatted_number(12_500_000, divisor=1_000_000) == "13"
     assert formatted_number(-12_500_000, divisor=1_000_000) == "-13"
     assert formatted_number(1.145, multiplier=100) == "115"
+
+
+def test_manual_remark_file_can_be_reopened_without_transaction_rows(tmp_path):
+    source = demo_sheet(); config = suggest_config([source])
+    remarks = {("node", "3nm"): "客戶要求追蹤\n下次更新", ("total", "總計（報表）"): "總覽"}
+    path = tmp_path / "remarks.json"
+    save_remark_file(path, remarks, config)
+    context, restored = load_remark_file(path)
+    assert context == remark_context(config)
+    assert restored == remarks
+    assert "sales-NTD" not in path.read_text()
 
 
 def test_demo_aggregates_service_and_compares_without_sending_data():

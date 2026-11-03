@@ -126,6 +126,45 @@ def load_config(path: str | Path) -> ReportConfig:
         raise ValueError("設定檔格式不正確。") from exc
 
 
+def remark_context(config: ReportConfig):
+    return {"year_mode": config.year_mode, "year": config.year if config.year_mode != "all" else None,
+            "fiscal_start": config.fiscal_start if config.year_mode == "fiscal" else None,
+            "month": config.month, "filters": config.filters, "actual": config.actual, "original": config.original}
+
+
+def save_remark_file(path, remarks, config):
+    document = {"version": 1, "context": remark_context(config),
+                "remarks": [{"kind": kind, "node": node, "text": text} for (kind, node), text in remarks.items()]}
+    text = json.dumps(document, ensure_ascii=False, indent=2)
+    if len(text.encode("utf-8")) > 10_000_000:
+        raise ValueError("備註檔超過 10 MB，請減少備註內容。")
+    Path(path).write_text(text, encoding="utf-8")
+
+
+def load_remark_file(path):
+    path = Path(path)
+    if path.stat().st_size > 10_000_000:
+        raise ValueError("備註檔超過 10 MB。")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+        if document["version"] != 1 or not isinstance(document["context"], dict):
+            raise ValueError("備註檔版本或期間格式無效。")
+        items = document["remarks"]
+        if not isinstance(items, list) or len(items) > MAX_REPORT_ROWS:
+            raise ValueError("備註筆數超出限制。")
+        remarks = {}
+        for item in items:
+            kind, node, text = item["kind"], item["node"], item["text"]
+            if kind not in {"node", "total"} or not isinstance(node, str) or not isinstance(text, str) or len(text) > 32767:
+                raise ValueError("備註內容格式無效。")
+            if (kind, node) in remarks:
+                raise ValueError("備註檔包含重複的 Tech Node。")
+            remarks[(kind, node)] = text
+        return document["context"], remarks
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError("備註檔格式不正確。") from exc
+
+
 def observed_values(sheets: list[Sheet], config: ReportConfig, field_name: str) -> list[str]:
     values = set()
     for sheet in sheets:

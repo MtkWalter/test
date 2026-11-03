@@ -76,6 +76,15 @@ def test_manual_remarks_edit_preserve_reconfirm_export_and_reset(qapp, tmp_path,
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(preset), "JSON"))
     widget.save_settings()
     assert text not in json.dumps(json.loads(preset.read_text()), ensure_ascii=False)
+    remarks = tmp_path / "remarks.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(remarks), "JSON"))
+    widget.save_remarks()
+    reopened = ReportDialog([demo_sheet()], widget.config)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: (str(remarks), "JSON"))
+    reopened.open_remarks()
+    assert reopened.result.frame.iloc[0]["Remark"] == text
+    assert not reopened.confirm.isChecked()
+    reopened.close()
     path = tmp_path / "with-remark.xlsx"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(path), "Excel"))
     widget.confirm.setChecked(True); widget.export_button.click()
