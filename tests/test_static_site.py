@@ -95,6 +95,31 @@ def test_static_site_roundtrip_and_no_workbook_upload(static_page, tmp_path):
     assert rows["N7"][8].value is None and rows["N14"][10].value is None
     assert rows["N40"][11].value is None
     book.close()
+    assert page.locator("#preview-head tr").count() == 3
+    assert page.locator("#preview-head tr").evaluate_all("rows => rows.every(row => [...row.cells].reduce((sum, cell) => sum + cell.colSpan, 0) === 12)")
+    assert "FY27 act" in page.locator("#preview-head tr").nth(2).inner_text()
+    assert row.locator("td").nth(8).evaluate("cell => getComputedStyle(cell).backgroundColor") == "rgb(255, 240, 175)"
+    with page.expect_download() as captured:
+        page.locator("#download-result-html").click()
+    html = tmp_path / "monthly-output.html"
+    captured.value.save_as(html)
+    offline = page.context.new_page()
+    offline.route("http://**/*", lambda route: route.abort())
+    offline.route("https://**/*", lambda route: route.abort())
+    offline.set_content(html.read_text(encoding="utf-8"))
+    assert offline.locator(".monthly-pivot thead tr").count() == 3
+    assert offline.locator(".report-title").text_content() == "Sep  |  FY27 Sales & Costs – Monthly Pivot"
+    saved_row = offline.locator("tbody tr").filter(has=offline.locator("td:first-child", has_text="N20"))
+    assert saved_row.locator("td").nth(8).evaluate("cell => getComputedStyle(cell).backgroundColor") == "rgb(255, 240, 175)"
+    assert saved_row.locator("td").nth(10).evaluate("cell => getComputedStyle(cell).backgroundColor") == "rgb(201, 239, 243)"
+    assert saved_row.locator(".remark-text").inner_text() == remark
+    assert offline.locator("script, img, link").count() == 0
+    offline.close()
+    if os.environ.get("REPORT_PREVIEW_OUTPUT"):
+        destination = Path(os.environ["REPORT_PREVIEW_OUTPUT"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        preview = html.read_text(encoding="utf-8").replace("<h1>", '<p><b>版型預覽：以下為合成報表資料，並非您的原始資料。</b></p><h1>', 1)
+        destination.write_text(preview, encoding="utf-8")
     assert source.read_bytes() == original
     origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
     assert requests and all(method in {"GET", "HEAD"} and target.startswith(origin) for method, target in requests)
@@ -102,6 +127,8 @@ def test_static_site_roundtrip_and_no_workbook_upload(static_page, tmp_path):
     if os.environ.get("REPORT_EXPECTED_REVISION"):
         manifest = page.request.get(url + "site-manifest.json").json()
         assert manifest["revision"] == os.environ["REPORT_EXPECTED_REVISION"]
+        example = page.request.get(url + "example-output.html")
+        assert example.ok and "合成報表資料" in example.text()
     page.on("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="清除資料").click()
     playwright.expect(page.locator("#results")).to_be_hidden()
@@ -204,7 +231,7 @@ def test_static_site_raw_errors_roundtrip_and_offline_html(static_page, tmp_path
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     if os.environ.get("REPORT_PREVIEW_OUTPUT"):
-        destination = Path(os.environ["REPORT_PREVIEW_OUTPUT"])
+        destination = Path(os.environ["REPORT_PREVIEW_OUTPUT"]).with_name("example-errors.html")
         destination.parent.mkdir(parents=True, exist_ok=True)
         preview = html.read_text(encoding="utf-8").replace("<h1>", '<p><b>功能預覽：以下為 600 項合成測試錯誤，並非您的原始資料。</b></p><h1>', 1)
         destination.write_text(preview, encoding="utf-8")
@@ -212,7 +239,7 @@ def test_static_site_raw_errors_roundtrip_and_offline_html(static_page, tmp_path
     assert not errors
 
     if os.environ.get("REPORT_EXPECTED_REVISION"):
-        example = page.request.get(url + "example-output.html")
+        example = page.request.get(url + "example-errors.html")
         assert example.ok and "600 項合成測試錯誤" in example.text()
 
 

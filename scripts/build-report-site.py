@@ -67,6 +67,7 @@ def build(destination: Path = ROOT / "_site"):
     html = html.replace('<body>', '<body data-report-mode="static">')
     html = html.replace('<script src="app.js" defer></script>', '<script src="site-bridge.js" defer></script>\n  <script src="app.js" defer></script>')
     html = html.replace('href="style.css"', f'href="style.css?v={revision}"')
+    html = html.replace('href="report.css"', f'href="report.css?v={revision}"')
     for name in ("site-bridge.js", "app.js"):
         html = html.replace(f'src="{name}"', f'src="{name}?v={revision}"')
     html = html.replace('本機工作階段', '瀏覽器工作階段').replace('本機運算', '瀏覽器內運算')

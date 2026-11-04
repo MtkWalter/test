@@ -511,7 +511,7 @@ def build_workbook(data: ReportData) -> Workbook:
     sheet = book.active
     sheet.title = "monthly pivot"
     sheet.sheet_view.showGridLines = False
-    sheet.freeze_panes = "B4"
+    sheet.freeze_panes = "A4"
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.paperSize = sheet.PAPERSIZE_A3
@@ -521,7 +521,7 @@ def build_workbook(data: ReportData) -> Workbook:
     sheet.sheet_properties.outlinePr.summaryBelow = False
     for span in ("A1:G1", "H1:I1", "J1:K1", "B2:C2", "D2:E2", "F2:G2", "H2:I2", "J2:K2"):
         sheet.merge_cells(span)
-    sheet["A1"] = f"{calendar.month_abbr[data.month]} {data.year} | {data.fiscal_year} Sales – Monthly Pivot"
+    sheet["A1"] = f"{calendar.month_abbr[data.month]}  |  {data.fiscal_year} Sales & Costs – Monthly Pivot"
     sheet["H1"], sheet["J1"] = "≥ 115% → Yellow", "≤ 85% → Blue"
     sheet["L1"] = "金額：百萬元｜單月"
     top = {"A2": "Tech Node", "B2": "tsmc", "D2": "Non-T", "F2": "Total (service incl.)",
@@ -539,12 +539,20 @@ def build_workbook(data: ReportData) -> Workbook:
     for row in sheet.iter_rows(min_row=1, max_row=3, max_col=12):
         for cell in row:
             cell.fill = PatternFill("solid", fgColor=dark if cell.row != 2 else "E7EAF2")
-            cell.font = Font(name="Microsoft JhengHei", size=10, bold=True,
-                             color="FFFFFF" if cell.row != 2 else dark)
+            cell.font = Font(name="Calibri", size=11, bold=True,
+                             color="FFFFFF" if cell.row != 2 else "263448")
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     sheet["H1"].fill = PatternFill("solid", fgColor=yellow)
     sheet["J1"].fill = PatternFill("solid", fgColor=blue)
-    sheet["H1"].font = sheet["J1"].font = Font(name="Microsoft JhengHei", color=dark, bold=True)
+    sheet["H1"].font = sheet["J1"].font = Font(name="Calibri", size=11, color="263448", bold=True)
+    sheet["A1"].fill = PatternFill("solid", fgColor="1C2845")
+    sheet["A1"].font = Font(name="Calibri", size=14, color="FFFFFF", bold=True)
+    sheet["A1"].alignment = Alignment(horizontal="left", vertical="center")
+    sheet["L1"].fill = PatternFill("solid", fgColor="E8EEF5")
+    sheet["L1"].font = Font(name="Calibri", size=11, color="53657C")
+    sheet["F2"].fill = PatternFill("solid", fgColor="D5EFD5")
+    for coordinate in ("H2", "J2"):
+        sheet[coordinate].font = Font(name="Calibri", size=11, color="A54141", bold=True)
     row_number = 4
     for node in data.nodes:
         t = data.totals.get((node, "TSMC"))
@@ -567,31 +575,29 @@ def build_workbook(data: ReportData) -> Workbook:
                 cell = sheet.cell(row_number, col)
                 value = values[col - 1] if part == 0 and col <= 11 else chunk if col == 12 else f"{node}（續）" if col == 1 else None
                 _literal(cell, value)
-                cell.font = Font(name="Microsoft JhengHei", size=10, bold=col == 1)
-                cell.fill = PatternFill("solid", fgColor="F0F5FA" if data.nodes.index(node) % 2 == 0 else "FFFFFF")
+                cell.font = Font(name="Calibri", size=11, color="263448")
+                cell.fill = PatternFill("solid", fgColor="EAF3F7" if data.nodes.index(node) % 2 == 0 else "EDE2D1")
                 cell.border = border
                 cell.alignment = Alignment(vertical="top", wrap_text=col in (1, 12), horizontal="left" if col in (1, 12) else "right")
                 if 2 <= col <= 11:
                     cell.number_format = "0%" if col in (9, 11) else '#,##0;[Red]-#,##0;0'
-                if col in (6, 7):
-                    cell.fill = PatternFill("solid", fgColor="E0EFDF")
             if not part:
                 for rate, columns in ((rt, (8, 9)), (rn, (10, 11))):
                     if triggered(rate):
                         for col in columns:
                             sheet.cell(row_number, col).fill = PatternFill("solid", fgColor=yellow if rate >= HIGH else blue)
-            sheet.row_dimensions[row_number].height = min(409, max(27, (chunk.count("\n") + 1 + len(chunk) // 85) * 15))
+            sheet.row_dimensions[row_number].height = min(409, max(29, (chunk.count("\n") + 1 + len(chunk) // 65) * 15))
             row_number += 1
     row_number += 1
     sheet.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=12)
     sheet.cell(row_number, 1, "金額：百萬元；主表顯示整數、Remark 一位小數。使用原始精度計算；預算≤0或缺值時達成率空白。過長備註接續列示，完整內容可見差異明細。")
     sheet.cell(row_number, 1).alignment = Alignment(wrap_text=True, vertical="top")
     sheet.row_dimensions[row_number].height = 30
-    for col in range(1, 13):
-        sheet.column_dimensions[get_column_letter(col)].width = 19 if col == 1 else 105 if col == 12 else 14
-    sheet.row_dimensions[1].height = 30
-    sheet.row_dimensions[2].height = 24
-    sheet.row_dimensions[3].height = 34
+    for col, width in enumerate((19, 13, 13, 13, 13, 14, 14, 16, 16, 16, 16, 83), 1):
+        sheet.column_dimensions[get_column_letter(col)].width = width
+    sheet.row_dimensions[1].height = 34
+    sheet.row_dimensions[2].height = 30
+    sheet.row_dimensions[3].height = 31
     sheet.print_area = f"A1:L{row_number}"
     details = book.create_sheet("差異明細")
     details.append(["Tech Node", "客群", "END USER", "P/N", "ACT（元）", "BUDGET（元）", "ACT-BUDGET（元）", "需填 Remark"])

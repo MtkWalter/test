@@ -28,7 +28,7 @@ from .raw_export import generate_report_with_raw, inspect_raw_workbook
 from .report_preview import preview_workbook
 
 JSON_LIMIT = 512 * 1024
-STATIC = {"": "index.html", "app.js": "app.js", "style.css": "style.css"}
+STATIC = {"": "index.html", "app.js": "app.js", "style.css": "style.css", "report.css": "report.css"}
 
 
 @dataclass
@@ -208,7 +208,7 @@ class ReportHandler(BaseHTTPRequestHandler):
             if route in STATIC:
                 name = STATIC[route]
                 body = files("excel_insights").joinpath("web", name).read_bytes()
-                mime = {"index.html": "text/html", "app.js": "text/javascript", "style.css": "text/css"}[name]
+                mime = {"index.html": "text/html", "app.js": "text/javascript", "style.css": "text/css", "report.css": "text/css"}[name]
                 self._headers(HTTPStatus.OK, mime + "; charset=utf-8", len(body))
                 self.wfile.write(body)
             elif route == "api/state":

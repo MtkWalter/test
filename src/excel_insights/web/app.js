@@ -180,12 +180,20 @@ function renderResult(job) {
   $("warnings").textContent = result.warnings.join("\n");
   $("download").href = job.download;
   $("download").setAttribute("download", job.filename);
+  renderReportHeader(job.preview.headers || [], result);
+  const footer = document.createDocumentFragment();
+  for (const note of job.preview.footnotes || []) {
+    const row = document.createElement("tr"), cell = document.createElement("td");
+    cell.colSpan = 12; cell.textContent = note; row.append(cell); footer.append(row);
+  }
+  $("preview-foot").replaceChildren(footer);
   const fragment = document.createDocumentFragment();
   for (const row of job.preview.rows) {
     const tr = document.createElement("tr");
+    if (row.shade === "blue" || row.shade === "tan") tr.classList.add(`row-${row.shade}`);
     row.cells.forEach((value, i) => {
       const td = document.createElement("td");
-      if (i === 5 || i === 6) td.classList.add("total-cell");
+      if (i > 0 && i < 11 && i !== 8 && i !== 10 && value.startsWith("-")) td.classList.add("negative");
       if ((i === 7 || i === 8) && row.tsmc) td.classList.add(`tone-${row.tsmc}`);
       if ((i === 9 || i === 10) && row.non_t) td.classList.add(`tone-${row.non_t}`);
       if (i === 11) {
@@ -206,6 +214,24 @@ function renderResult(job) {
   $("results").hidden = false;
   $("step-settings").classList.remove("active"); $("step-settings").classList.add("done"); $("step-results").classList.add("active");
   $("results").scrollIntoView({block: "start"});
+}
+function renderReportHeader(headers, result) {
+  const fy = result.fiscal_year || "FY";
+  const fallback = ["Tech Node", `${fy} act`, `${fy} ori`, `${fy} act`, `${fy} ori`, `${fy} act`, `${fy} ori`, `vs ${fy} ori`, `vs ${fy} ori %`, `vs ${fy} ori`, `vs ${fy} ori %`, "Remark"];
+  const rows = [document.createElement("tr"), document.createElement("tr"), document.createElement("tr")];
+  const append = (row, value, span = 1, className = "") => {
+    const cell = document.createElement("th"); cell.textContent = value; cell.colSpan = span;
+    cell.className = className; row.append(cell);
+  };
+  append(rows[0], headers[0]?.[0] || `${fy} Sales & Costs – Monthly Pivot`, 7, "report-title");
+  append(rows[0], headers[0]?.[7] || "≥ 115% → Yellow", 2, "report-high");
+  append(rows[0], headers[0]?.[9] || "≤ 85% → Blue", 2, "report-low");
+  append(rows[0], headers[0]?.[11] || "金額：百萬元｜單月");
+  for (const [column, span, label, className] of [[0,1,"Tech Node",""],[1,2,"tsmc",""],[3,2,"Non-T",""],[5,2,"Total (service incl.)","total-heading"],[7,2,"TSMC","variance-heading"],[9,2,"Non-T","variance-heading"],[11,1,"Remark",""]]) {
+    append(rows[1], headers[1]?.[column] || label, span, className);
+  }
+  for (let column = 0; column < 12; column++) append(rows[2], headers[2]?.[column] || fallback[column]);
+  $("preview-head").replaceChildren(...rows);
 }
 async function generate(event, includeRaw = false) {
   event.preventDefault();
@@ -256,14 +282,23 @@ function downloadHTML(includeReport = false) {
   const escape = (value) => String(value ?? "").replace(/[&<>"']/gu, (character) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[character]));
   const row = (values, tag = "td") => `<tr>${values.map((value) => `<${tag}>${escape(value)}</${tag}>`).join("")}</tr>`;
   let report = "";
+  const reportStyles = Array.from(document.styleSheets).find((sheet) => sheet.href && new URL(sheet.href).pathname.endsWith("/report.css"));
+  const reportCSS = reportStyles ? Array.from(reportStyles.cssRules, (rule) => rule.cssText).join("\n") : "";
   if (includeReport && completedJob) {
     const result = completedJob.result;
     report = `<h2>${escape($("result-title").textContent)}</h2><p>${escape($("result-period").textContent)}</p><pre>${escape(result.warnings.join("\n"))}</pre>`;
     if (result.report_generated !== false) {
-      report += `<p>金額：百萬元。此 HTML 為畫面預覽，完整報表及原始資料請下載 OUTPUT Excel。</p><div class="scroll"><table><thead>${row(["Tech Node", "TSMC ACT", "TSMC BUDGET", "Non-T ACT", "Non-T BUDGET", "Total ACT", "Total BUDGET", "TSMC 增減", "TSMC 達成率", "Non-T 增減", "Non-T 達成率", "Remark"], "th")}</thead><tbody>${completedJob.preview.rows.map((item) => row(item.cells)).join("")}</tbody></table></div>`;
+      const table = $("preview-table").cloneNode(true);
+      for (const element of table.querySelectorAll("[id]")) element.removeAttribute("id");
+      table.removeAttribute("id");
+      for (const button of table.querySelectorAll("button")) button.remove();
+      for (const remark of table.querySelectorAll(".remark-text")) remark.classList.add("expanded");
+      report += `<p>依 OUTPUT Excel 版型呈現；金額：百萬元。可上下、左右捲動，Remark 全文保留。</p><div class="scroll report-scroll">${table.outerHTML}</div>`;
+      if (completedJob.preview.truncated) report += "<p>此 HTML 顯示前 200 列預覽；完整內容請下載 OUTPUT Excel。</p>";
     }
   }
-  const html = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OUTPUT 結果與完整錯誤清單</title><style>body{font:14px/1.7 system-ui,sans-serif;margin:30px;color:#244450;background:#f6f9fa}h1{font-size:24px}h2{font-size:19px}p,pre{white-space:pre-wrap;overflow-wrap:anywhere}.scroll{max-height:65vh;overflow:auto;border:1px solid #c8d7dd;background:white;margin-bottom:24px}table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}td,th{padding:10px;border-bottom:1px solid #e2eaed;border-right:1px solid #e2eaed;text-align:left;vertical-align:top;min-width:70px;white-space:pre-wrap;overflow-wrap:anywhere}th{position:sticky;top:0;background:#e5eff1;z-index:1}td:nth-last-child(-n+2){min-width:280px;max-width:700px}</style><h1>OUTPUT 結果與完整錯誤清單</h1><p>原始檔：${escape(upload?.name)}\n匯出時間：${escape(new Date().toLocaleString("zh-TW"))}\n本 HTML 可離線開啟，包含匯出時的結果與全部錯誤資訊。</p>${report}<h2>完整錯誤清單（共 ${diagnosticItems.length.toLocaleString("zh-TW")} 項）</h2><div class="scroll"><table><thead>${row(["序號", "工作表", "來源列號", "欄位位置", "欄位名稱", "原始值", "錯誤原因"], "th")}</thead><tbody>${diagnosticItems.map((issue, index) => row([index + 1, issue.sheet, issue.row, issue.column, issue.field, issue.value, issue.message])).join("")}</tbody></table></div><p>錯誤清單未截斷；可捲動查看或使用瀏覽器搜尋。${diagnosticItems.length ? "" : "未發現報表驗證錯誤。"}</p></html>`;
+  const errorsHTML = diagnosticItems.length || !includeReport ? `<h2>完整錯誤清單（共 ${diagnosticItems.length.toLocaleString("zh-TW")} 項）</h2><div class="scroll"><table><thead>${row(["序號", "工作表", "來源列號", "欄位位置", "欄位名稱", "原始值", "錯誤原因"], "th")}</thead><tbody>${diagnosticItems.map((issue, index) => row([index + 1, issue.sheet, issue.row, issue.column, issue.field, issue.value, issue.message])).join("")}</tbody></table></div><p>錯誤清單未截斷；可捲動查看或使用瀏覽器搜尋。</p>` : "";
+  const html = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OUTPUT 月報與完整錯誤清單</title><style>body{font:14px/1.7 system-ui,sans-serif;margin:30px;color:#244450;background:#f6f9fa}h1{font-size:24px}h2{font-size:19px}p,pre{white-space:pre-wrap;overflow-wrap:anywhere}.scroll{max-height:65vh;overflow:auto;border:1px solid #c8d7dd;background:white;margin-bottom:24px}table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}td,th{padding:10px;border-bottom:1px solid #e2eaed;border-right:1px solid #e2eaed;text-align:left;vertical-align:top;min-width:70px;white-space:pre-wrap;overflow-wrap:anywhere}th{position:sticky;top:0;background:#e5eff1;z-index:1}td:nth-last-child(-n+2){min-width:280px;max-width:700px}${reportCSS}.monthly-pivot .remark-text{display:block;overflow:visible;white-space:pre-wrap;-webkit-line-clamp:unset}.report-scroll{max-height:75vh;width:max-content;max-width:100%}@media print{body{margin:0}.scroll{max-height:none;overflow:visible;border:0}}</style><h1>${includeReport ? "OUTPUT 月報" : "完整錯誤清單"}</h1><p>原始檔：${escape(upload?.name)}\n匯出時間：${escape(new Date().toLocaleString("zh-TW"))}\n本 HTML 可離線開啟，包含匯出時的結果與全部錯誤資訊。</p>${report}${errorsHTML}</html>`;
   const url = URL.createObjectURL(new Blob([html], {type: "text/html;charset=utf-8"}));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = includeReport ? "OUTPUT-結果與完整錯誤清單.html" : "OUTPUT-完整錯誤清單.html"; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);

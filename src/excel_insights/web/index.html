@@ -8,6 +8,7 @@
   <title>Monthly Report · 單月報表工作台</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="report.css">
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -82,8 +83,8 @@
         <p><button id="download-result-html" class="button-outline compact" type="button">下載結果 HTML</button> <a id="view-errors" class="button-link" href="#diagnostics" hidden>查看完整錯誤清單 ↑</a></p>
         <div id="report-preview">
         <div class="preview-heading"><h3>Monthly Pivot 預覽</h3><div><span class="legend high">≥115%</span><span class="legend low">≤85%</span></div></div>
-        <p class="preview-note">金額：百萬元。完整客戶與品號數字另附在 Excel「差異明細」。</p>
-        <div class="table-wrap"><table id="preview-table"><thead><tr><th rowspan="2">Tech Node</th><th colspan="2">TSMC</th><th colspan="2">Non-T</th><th colspan="2" class="total-heading">Total（含 Service）</th><th colspan="2">TSMC vs 預算</th><th colspan="2">Non-T vs 預算</th><th rowspan="2" class="remark-heading">Remark</th></tr><tr><th>ACT</th><th>BUDGET</th><th>ACT</th><th>BUDGET</th><th class="total-heading">ACT</th><th class="total-heading">BUDGET</th><th>增減額</th><th>達成率</th><th>增減額</th><th>達成率</th></tr></thead><tbody id="preview-body"></tbody></table></div>
+        <p class="preview-note">依 OUTPUT Excel 版型顯示 A–L 共 12 欄。金額：百萬元；可橫向捲動查看 Remark，下載 HTML 保留完整備註。</p>
+        <div class="table-wrap"><table id="preview-table" class="monthly-pivot"><colgroup><col class="node-col"><col class="amount-col" span="4"><col class="total-col" span="2"><col class="variance-col" span="4"><col class="remark-col"></colgroup><thead id="preview-head"></thead><tbody id="preview-body"></tbody><tfoot id="preview-foot"></tfoot></table></div>
         <p id="preview-truncated" class="preview-note" hidden>預覽只顯示前 200 列；下載的 Excel 保留全部內容。</p>
         </div>
       </section>

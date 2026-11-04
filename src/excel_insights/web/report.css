@@ -1,0 +1,28 @@
+/* The twelve-column monthly pivot follows the supplied OUTPUT workbook. */
+.monthly-pivot{width:1782px;table-layout:fixed;border-collapse:separate;border-spacing:0;font:14px/1.45 Calibri,Carlito,Arial,"Microsoft JhengHei",sans-serif;color:#263448}
+.monthly-pivot col.node-col{width:138px}
+.monthly-pivot col.amount-col{width:96px}
+.monthly-pivot col.total-col{width:103px}
+.monthly-pivot col.variance-col{width:117px}
+.monthly-pivot col.remark-col{width:586px}
+.monthly-pivot thead th{box-sizing:border-box;white-space:normal;min-width:0;padding:8px 10px;text-align:center;font-size:14px;line-height:1.35;color:#263448;border-right:1px solid #d8e0e9;border-bottom:1px solid #cdd6e3;font-weight:700;vertical-align:middle;position:sticky;z-index:3}
+.monthly-pivot thead tr:nth-child(1) th{height:45px;top:0;background:#e8eef5;color:#53657c;font-weight:400}
+.monthly-pivot thead tr:nth-child(1) th.report-title{background:#1c2845;color:#fff;font-size:18px;font-weight:700;text-align:left;padding-left:14px}
+.monthly-pivot thead tr:nth-child(1) th.report-high{background:#fff0af;color:#263448;font-weight:700}
+.monthly-pivot thead tr:nth-child(1) th.report-low{background:#c9eff3;color:#263448;font-weight:700}
+.monthly-pivot thead tr:nth-child(2) th{height:40px;top:45px;background:#e7eaf2}
+.monthly-pivot thead tr:nth-child(2) th.total-heading{background:#d5efd5}
+.monthly-pivot thead tr:nth-child(2) th.variance-heading{color:#a54141}
+.monthly-pivot thead tr:nth-child(3) th{height:42px;top:85px;background:#253859;color:#fff}
+.monthly-pivot tbody td{padding:9px 11px;box-sizing:border-box;border-right:1px solid #d8e0e9;border-bottom:1px solid #cdd6e3;vertical-align:middle;text-align:right;min-width:0;font-size:14px;line-height:1.45;font-weight:400;background:#eaf3f7;color:#263448;white-space:nowrap}
+.monthly-pivot tbody tr:nth-child(even) td{background:#ede2d1}
+.monthly-pivot tbody tr.row-blue td{background:#eaf3f7}
+.monthly-pivot tbody tr.row-tan td{background:#ede2d1}
+.monthly-pivot tbody td:first-child{text-align:left;min-width:0;font-weight:400}
+.monthly-pivot tbody td.tone-high{background:#fff0af!important;color:#263448}
+.monthly-pivot tbody td.tone-low{background:#c9eff3!important;color:#263448}
+.monthly-pivot tbody td.negative{color:#c00000}
+.monthly-pivot tbody td.remark-cell{min-width:0;max-width:none;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.monthly-pivot .remark-text{line-height:1.45}
+.monthly-pivot tfoot td{position:static;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;padding:12px 14px;font-size:12px;line-height:1.6;background:#f3f6fa;color:#53657c;border-top:1px solid #cdd6e3;min-width:0;font-weight:400}
+@media print{@page{size:A3 landscape;margin:10mm}.monthly-pivot{width:100%;font-size:9pt}.monthly-pivot thead{display:table-header-group}.monthly-pivot thead th{position:static;font-size:9pt}.monthly-pivot tbody td{font-size:9pt}.monthly-pivot .remark-text{display:block;overflow:visible}.monthly-pivot .remark-toggle{display:none}.monthly-pivot td,.monthly-pivot th{print-color-adjust:exact;-webkit-print-color-adjust:exact}}

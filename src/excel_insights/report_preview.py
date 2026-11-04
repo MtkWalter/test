@@ -18,11 +18,16 @@ def preview_workbook(path: Path, sheet_name: str = "monthly pivot") -> dict:
     book = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = book[sheet_name]
+        headers = [[str(cell.value or "") for cell in row] for row in sheet.iter_rows(min_row=1, max_row=3, max_col=12)]
+        footnotes = []
         rows = []
         truncated = False
         for row in sheet.iter_rows(min_row=4, max_col=12):
             node = row[0].value
-            if not node or str(node).startswith("金額："):
+            if not node:
+                continue
+            if str(node).startswith(("金額：", "註：", "注：")):
+                footnotes.append(str(node))
                 continue
             if len(rows) >= PREVIEW_ROWS:
                 truncated = True
@@ -35,7 +40,9 @@ def preview_workbook(path: Path, sheet_name: str = "monthly pivot") -> dict:
                 color = row[i].fill.fgColor.rgb
                 colors.append("high" if color in ("00FFF0AF", "FFFFF0AF") else
                               "low" if color in ("00C9EFF3", "FFC9EFF3") else "")
-            rows.append({"cells": cells, "tsmc": colors[0], "non_t": colors[1]})
-        return {"rows": rows, "truncated": truncated}
+            background = row[0].fill.fgColor.rgb
+            shade = "blue" if background in ("00EAF3F7", "FFEAF3F7") else "tan" if background in ("00EDE2D1", "FFEDE2D1") else ""
+            rows.append({"cells": cells, "tsmc": colors[0], "non_t": colors[1], "shade": shade})
+        return {"rows": rows, "truncated": truncated, "headers": headers, "footnotes": footnotes}
     finally:
         book.close()
