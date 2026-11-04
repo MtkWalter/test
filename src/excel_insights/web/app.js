@@ -30,6 +30,8 @@ function progress(message, percent = null) {
   else $("progress-bar").value = percent;
 }
 async function api(path, data) {
+  if (window.ReportTransport) return window.ReportTransport.api(path, data);
+  if (document.body.dataset.reportMode === "static") throw new Error("網頁資源尚未載入，請重新整理頁面。");
   const options = data === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)};
   let response;
   try { response = await fetch(path, options); }
@@ -113,6 +115,7 @@ function readRules() {
   return {tsmc_values: tsmc, non_t_values: nonT.length ? nonT : null, node_aliases: aliases, fiscal_start_month: Number($("fiscal-start").value)};
 }
 function uploadFile(file) {
+  if (window.ReportTransport) return window.ReportTransport.upload(file, (message) => progress(message));
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `api/upload?filename=${encodeURIComponent(file.name)}`);
@@ -237,9 +240,25 @@ $("save-rules").addEventListener("click", () => {
   } catch (error) {showError(error.message);}
 });
 $("stop-app").addEventListener("click", async () => {
-  if (busy || !window.confirm("關閉本機程式並清除暫存？已下載的 Excel 會保留。")) return;
+  const isStatic = window.ReportTransport?.mode === "static";
+  const question = isStatic ? "清除瀏覽器中的 Excel 與運算資料？已下載的 OUTPUT 會保留。" : "關閉本機程式並清除暫存？已下載的 Excel 會保留。";
+  if (busy || !window.confirm(question)) return;
   try {
-    await api("api/shutdown", {}); closed = true; setBusy(false);
+    await api("api/shutdown", {});
+    if (isStatic) {
+      upload = null; resetResult(); setBusy(false);
+      $("file-summary").hidden = true; $("drop-zone").hidden = false;
+      $("file-name").textContent = ""; $("file-size").textContent = "";
+      $("sheet").replaceChildren(new Option("先選擇 INPUT Excel", ""));
+      $("preview-body").replaceChildren(); $("warnings").textContent = "";
+      $("result-period").textContent = "";
+      for (const id of ["act-count", "budget-count", "remark-count"]) $(id).textContent = "0";
+      $("step-source").classList.remove("done"); $("step-source").classList.add("active");
+      $("step-settings").classList.remove("active", "done");
+      $("download").removeAttribute("href"); showError("");
+      return;
+    }
+    closed = true; setBusy(false);
     $("connection-error").textContent = "本機程式正在結束並清除暫存。若要繼續，請重新開啟 MonthlyReport.exe。";
     $("connection-error").hidden = false; $("download").removeAttribute("href");
   } catch (error) {showError(error.message);}

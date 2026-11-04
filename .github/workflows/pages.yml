@@ -1,0 +1,92 @@
+name: Publish report website
+
+on:
+  push:
+    branches: [main, codex/monthly-report-generator]
+    paths:
+      - '.github/workflows/pages.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'scripts/build-report-site.py'
+      - 'src/excel_insights/site/**'
+      - 'src/excel_insights/web/**'
+      - 'src/excel_insights/monthly_report.py'
+      - 'src/excel_insights/report_preview.py'
+      - 'tests/test_static_site.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-report-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      REPORT_BROWSER_CHANNEL: chrome
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install locked build tools
+        run: |
+          python -m pip install uv==0.12.23
+          uv sync --locked --extra dev --extra browser-test
+          npm ci --ignore-scripts
+      - name: Build the static browser application
+        run: uv run --no-sync python scripts/build-report-site.py
+      - name: Verify browser calculations and local-only workbook handling
+        run: uv run --no-sync python -m pytest -q tests/test_static_site.py tests/test_monthly_report.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MonthlyReport-Website
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Publish GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify-live:
+    needs: deploy
+    runs-on: ubuntu-latest
+    env:
+      REPORT_BROWSER_CHANNEL: chrome
+      REPORT_SITE_URL: ${{ needs.deploy.outputs.page_url }}
+      REPORT_EXPECTED_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install browser verification tools
+        run: |
+          python -m pip install uv==0.12.23
+          uv sync --locked --extra dev --extra browser-test
+      - name: Verify the published URL and download an actual workbook
+        run: uv run --no-sync python -m pytest -q tests/test_static_site.py -k roundtrip

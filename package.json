@@ -1,0 +1,12 @@
+{
+  "name": "monthly-report-static-site",
+  "version": "0.3.2",
+  "private": true,
+  "description": "Client-side Excel reporting with the existing Python engine in WebAssembly",
+  "scripts": {
+    "build:site": "python scripts/build-report-site.py"
+  },
+  "devDependencies": {
+    "pyodide": "0.29.5"
+  }
+}

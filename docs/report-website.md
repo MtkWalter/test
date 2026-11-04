@@ -1,0 +1,58 @@
+# 直接開網址使用的報表網站
+
+這個版本由 GitHub Pages 提供靜態網頁，**不需下載或執行 EXE，也不需安裝 Python**。報表運算使用 Pyodide／WebAssembly，在瀏覽器背景工作執行相同的 Python `monthly_report.py`，保留已確認的計算與 Remark 規則。
+
+## 使用方式
+
+1. 開啟已部署的網站網址。
+2. 選擇或拖曳 INPUT `.xlsx`／`.xlsm`，選取來源工作表。
+3. 指定西元年、單月、FY 年度標籤；需要時展開分類設定。
+4. 點「產生 OUTPUT」，查看進度、數值與完整 Remark。
+5. 點「下載 OUTPUT Excel」。完成後可用「清除資料」釋放瀏覽器中的工作資料，已下載的結果會保留。
+
+首次選檔會下載約 13 MB 的瀏覽器 Python 運算核心，請稍候；後續可使用瀏覽器的資源快取。建議使用電腦版的新版 Chrome、Edge 或 Firefox，處理大型資料時保留足夠記憶體。
+
+## Excel 會上傳嗎？
+
+**不會。** 網路只用來下載網頁、Python 核心及程式資源。選擇的 Excel 透過瀏覽器 File API 讀進 Web Worker 的記憶體檔案系統，再在同一個瀏覽器內計算、產生下載檔。沒有 Excel 上傳 API、外部計算伺服器、資料庫、分析追蹤或外部字型。
+
+原始檔不會被網頁修改。Excel 與報表資料不會存入 localStorage、IndexedDB 或 GitHub；「清除資料」會終止運算 Worker、清除工作資料並撤銷舊的下載連結。分類設定可另外下載成 JSON。關閉分頁會結束該分頁的運算。
+
+瀏覽器驗證包含「所有請求都只向網站同來源發出 GET／HEAD」檢查，確保選檔及產生報表不透過 HTTP 傳出 Excel。此版本也測試超過 100,000 列、1,000,000 儲存格的資料；實際速度與可處理大小仍取決於電腦和瀏覽器記憶體。
+
+## 已保留的報表規則
+
+- 單月、AS 最終金額來源、BD act／ori、BF TSMC／Non-T、BM 節點分類。
+- BI END USER 作為 Remark 客戶，BC P/N 作為產品。
+- F=B+D、G=C+E，Service／ADJ 相同。
+- 達成率≥115%／≤85%：分客群標色、產生對應 Remark；兩邊觸發則分別說明。
+- 全部客戶與品號列出，同方向優先、差額絕對值遞減。
+- 主表百萬元整數；Remark 百萬元一位小數。
+- 預算零、缺值、負數時達成率空白；先用完整精度計算，最後格式化。
+- 過長 Remark 用接續列保存全文，附完整差異明細與報表資訊。
+
+完整輸入要求與分類預設見 [報表規則](monthly-report.md)。網站與 EXE 直接共用同一份 Python 計算引擎，不另外維護一份 JavaScript 金額算法。
+
+## 開發、測試與發布
+
+在儲存庫根目錄執行：
+
+```sh
+uv sync --locked --extra dev --extra browser-test
+npm ci --ignore-scripts
+uv run --no-sync python scripts/build-report-site.py
+```
+
+產物在 `_site/`，包含 HTML、JavaScript、CSS、運算核心與固定版本套件。`python-deps.zip`、`report-engine.zip` 以確定的檔案順序與時間戳建立，並由瀏覽器核對 SHA-256。運算核心版本由 `package-lock.json` 固定，不從第三方 CDN 動態載入使用者程式。
+
+開發預覽可用 `python -m http.server --directory _site`；這只提供靜態檔案，不是 Excel 後端。網站需透過 HTTP／HTTPS 開啟，正式使用者直接開 GitHub Pages 的 HTTPS 網址。
+
+```sh
+uv run --no-sync python -m pytest -q tests/test_static_site.py
+```
+
+需有 Playwright 瀏覽器；可執行 `playwright install chromium`，或設定 `REPORT_BROWSER_CHANNEL=chrome`／`msedge` 使用已安裝的 Chrome／Edge。`REPORT_SITE_URL` 可改為已部署的網址；`REPORT_EXPECTED_REVISION` 可驗證部署版本。
+
+GitHub Actions **Publish report website** 會建置靜態網站、執行真實瀏覽器與大型 Excel 測試、上傳 `MonthlyReport-Website`，再部署 GitHub Pages，最後對正式網址做選檔、產生及下載驗證。
+
+第一次發布須由儲存庫管理者在 **Settings → Pages → Build and deployment → Source** 選擇 **GitHub Actions**。一般工作流程的 `GITHUB_TOKEN` 可發布已啟用的網站，但不能替管理者第一次啟用 Pages；若尚未啟用，Configure Pages 步驟會明確失敗。啟用後重跑該次工作流程即可，不需提供新的個人權杖。
