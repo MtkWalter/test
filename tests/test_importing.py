@@ -81,7 +81,8 @@ def test_import_can_be_cancelled_and_memory_shortage_is_explained(tmp_path, monk
 
 def test_sheet_selection_and_editable_limits(qapp, tmp_path):
     path = Path(tmp_path / "book.xlsx")
-    widget = ImportSelectionDialog({path: ["Raw Data", "monthly pivot(CS)"]}, ImportLimits())
+    widget = ImportSelectionDialog({path: ["Raw Data", "monthly pivot(CS)"]},
+                                   ImportLimits(max_cells=20_000_000, total_cells=30_000_000))
     widget.show(); qapp.processEvents()
     assert widget.selection() == {path: ["Raw Data"]}
     assert widget.limits().max_cells == 20_000_000

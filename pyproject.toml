@@ -17,16 +17,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.5", "pyinstaller==6.13.0", "xlwt==1.3.0"]
+browser-test = ["playwright==1.62.0"]
 
 [project.gui-scripts]
 excel-insights = "excel_insights.app:main"
-monthly-report = "excel_insights.monthly_app:main"
+monthly-report = "excel_insights.monthly_web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-excel_insights = ["assets/*.xlsx"]
+excel_insights = ["assets/*.xlsx", "web/*.html", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

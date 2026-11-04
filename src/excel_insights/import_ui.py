@@ -49,7 +49,7 @@ class ImportSelectionDialog(QDialog):
         grid.addWidget(QLabel("每檔上限（百萬格）"), 0, 0); grid.addWidget(self.file_millions, 1, 0)
         grid.addWidget(QLabel("總載入上限（百萬格）"), 0, 1); grid.addWidget(self.total_millions, 1, 1)
         layout.addLayout(grid)
-        info = QLabel("預設每檔 2,000 萬格、總量 3,000 萬格；列數支援 Excel 上限。內部空白欄仍計入資料矩形。提高上限仍取決於可用記憶體，建議先略過不需要的彙總表。")
+        info = QLabel("列數支援 Excel 上限，容量可在上方調整。內部空白欄仍計入資料矩形。提高上限仍取決於可用記憶體，建議先略過不需要的彙總表。")
         info.setWordWrap(True); layout.addWidget(info)
         self.status = QLabel(); layout.addWidget(self.status)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)

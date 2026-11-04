@@ -11,7 +11,7 @@ if __name__ == "__main__":
         if "--input" in sys.argv:
             from excel_insights.monthly_report import main
         else:
-            from excel_insights.monthly_app import main
+            from excel_insights.monthly_web import main
         raise SystemExit(main())
     except Exception:
         details = traceback.format_exc()

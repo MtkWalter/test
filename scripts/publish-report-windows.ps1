@@ -10,7 +10,7 @@ try {
         & $Python -m pytest -q
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     }
-    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name MonthlyReport --paths src --hidden-import openpyxl --exclude-module pandas --exclude-module numpy --exclude-module matplotlib --exclude-module tkinter --distpath artifacts/monthly-report-windows --workpath build/monthly-report --specpath build report_main.py
+    & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name MonthlyReport --paths src --hidden-import openpyxl --collect-data excel_insights --exclude-module PySide6 --exclude-module shiboken6 --exclude-module pandas --exclude-module numpy --exclude-module matplotlib --exclude-module tkinter --distpath artifacts/monthly-report-windows --workpath build/monthly-report --specpath build report_main.py
     if ($LASTEXITCODE -ne 0) { throw 'MonthlyReport PyInstaller build failed.' }
     $output = Join-Path $repo 'artifacts/monthly-report-windows'
     $samples = Join-Path $output 'samples'
@@ -41,7 +41,7 @@ try {
     }
     if (-not (Test-Path $report)) { throw 'Missing executable smoke report.' }
     $result = Get-Content $report -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($result.act_rows -ne 20 -or $result.ori_rows -ne 20 -or $result.error) {
+    if ($result.act_rows -ne 20 -or $result.ori_rows -ne 20 -or $result.interface -ne 'browser' -or $result.error) {
         throw 'Frozen report did not read the expected sample rows.'
     }
     & $Python scripts/verify-monthly-report.py $workbook

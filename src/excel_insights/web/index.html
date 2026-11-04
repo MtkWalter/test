@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Monthly Report · 單月報表工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#top" aria-label="Monthly Report 首頁"><span class="brand-icon">▥</span><span>MONTHLY<br><b>REPORT</b></span></a>
+    <p class="side-caption">單月 Excel 報表工作台</p>
+    <nav aria-label="報表流程">
+      <a href="#source" class="step active" id="step-source"><span>01</span><div><b>選擇資料</b><small>INPUT Excel</small></div></a>
+      <a href="#settings" class="step" id="step-settings"><span>02</span><div><b>確認設定</b><small>月份與分類</small></div></a>
+      <a href="#results" class="step" id="step-results"><span>03</span><div><b>預覽與下載</b><small>OUTPUT Excel</small></div></a>
+    </nav>
+    <div class="side-bottom"><span class="local-dot"></span>本機工作階段<p>所有資料與運算<br>都留在這台電腦。</p></div>
+  </aside>
+  <main id="top">
+    <header class="topbar"><span class="breadcrumb">工作台 <span>/</span> 單月報表</span><div class="top-actions"><span class="local-badge"><i></i> 本機處理</span><button id="stop-app" class="button-quiet" type="button">關閉程式</button></div></header>
+    <div class="content">
+      <div class="page-title"><div><p class="eyebrow">EXCEL → MONTHLY PIVOT</p><h1>把明細，整理成一份清楚的月報。</h1><p class="subtitle">依實績與預算產生報表，附上客戶與品號差異說明。</p></div><span class="title-mark" aria-hidden="true">↗</span></div>
+      <div id="connection-error" class="alert error" role="alert" hidden></div>
+      <form id="report-form">
+        <section id="source" class="card">
+          <div class="section-heading"><div class="section-number">01</div><div><h2>選擇來源資料</h2><p>選擇電腦上的 Excel，原始檔案會保留。</p></div><span class="section-tag">INPUT</span></div>
+          <div id="drop-zone" class="drop-zone">
+            <div class="file-icon" aria-hidden="true">X</div><div><h3>拖曳 Excel 檔案到這裡</h3><p>.xlsx 或 .xlsm · 支援大型資料串流彙總</p></div>
+            <button id="choose-file" type="button" class="button-outline">選擇 Excel 檔案</button>
+            <input id="input-file" type="file" accept=".xlsx,.xlsm" hidden aria-label="INPUT Excel">
+          </div>
+          <div id="file-summary" class="file-summary" hidden><span class="file-mini" aria-hidden="true">X</span><div><b id="file-name"></b><small id="file-size"></small></div><button id="replace-file" type="button" class="button-link">更換檔案</button></div>
+          <div class="form-field worksheet-field"><label for="sheet">來源工作表</label><select id="sheet" required disabled><option value="">先選擇 INPUT Excel</option></select></div>
+          <p class="privacy-note"><span aria-hidden="true">●</span> 檔案只傳送到本機程式，不會上傳到 GitHub 或外部伺服器。</p>
+        </section>
+        <section id="settings" class="card">
+          <div class="section-heading"><div class="section-number">02</div><div><h2>確認報表設定</h2><p>只計算所選單月，依 AS 銷售額比較 act 與 ori。</p></div><span class="section-tag">SETTINGS</span></div>
+          <div class="field-grid period-grid">
+            <div class="form-field"><label for="year">西元年</label><input id="year" type="number" min="1900" max="9999" required></div>
+            <div class="form-field"><label for="month">月份 <span class="field-hint">單月</span></label><select id="month" required></select></div>
+            <div class="form-field"><label for="fiscal-year">年度標籤</label><input id="fiscal-year" type="text" pattern="[Ff][Yy][0-9]{2}" maxlength="4" required placeholder="FY27"></div>
+            <div class="form-field output-field"><label for="output-name">下載檔名</label><input id="output-name" type="text" maxlength="120" required></div>
+          </div>
+          <details class="classification" id="classification">
+            <summary><span>客群與 Tech Node 分類</span><span class="summary-note">檢查或修改對照 <b>⌄</b></span></summary>
+            <div class="classification-body">
+              <p class="setting-note">預設將非空且非 TSMC 的 BF 值歸入 Non-T（包含 FI）。若有其他規則，可在下方調整。</p>
+              <div class="field-grid rules-grid">
+                <div class="form-field"><label for="tsmc-values">TSMC 的 BF 值</label><textarea id="tsmc-values" rows="2" placeholder="tsmc"></textarea><small>多個值以逗號或換行分隔。</small></div>
+                <div class="form-field"><label for="non-t-values">Non-T 的 BF 值</label><textarea id="non-t-values" rows="2" placeholder="留白：所有非 TSMC 的非空值"></textarea><small>留白即包含 FI 等其他分類。</small></div>
+              </div>
+              <div class="form-field fiscal-start"><label for="fiscal-start">會計年度起始月份</label><select id="fiscal-start"></select></div>
+              <div class="alias-title"><h3>Tech Node 合併對照</h3><button id="add-alias" class="button-link" type="button">＋ 新增對照</button></div>
+              <div class="alias-labels"><span>INPUT 名稱</span><span>OUTPUT 名稱</span><span></span></div>
+              <div id="alias-list"></div>
+              <p class="setting-note">未列入對照的節點保留原名。Service 的 BM 空白時，獨立列為 Service。</p>
+              <div class="rules-actions"><button id="load-rules" class="button-outline compact" type="button">載入分類設定</button><button id="save-rules" class="button-outline compact" type="button">儲存分類設定</button><input id="rules-file" type="file" accept=".json" hidden aria-label="分類設定 JSON"></div>
+            </div>
+          </details>
+          <div class="rule-summary"><span><b>AS</b> 最終金額來源</span><span><b>BI</b> END USER 客戶</span><span><b>BC</b> P/N 品號</span><span>主表整數 · Remark 一位小數</span></div>
+          <div id="form-error" class="alert error" role="alert" hidden></div>
+          <div class="generate-row"><p>達成率 <b>≥115%</b> 或 <b>≤85%</b> 自動產生 Remark。<br>全部客戶、品號列出，同方向差額優先。</p><button id="generate" class="button-primary" type="submit" disabled>產生 OUTPUT <span aria-hidden="true">→</span></button></div>
+        </section>
+      </form>
+      <section id="progress-card" class="card progress-card" aria-live="polite" hidden><div class="progress-heading"><span class="spinner" aria-hidden="true"></span><div><h2 id="progress-title">正在處理資料</h2><p id="progress-message"></p></div></div><progress id="progress-bar" max="100"></progress></section>
+      <section id="results" class="card results-card" hidden>
+        <div class="section-heading result-heading"><div class="section-number done">✓</div><div><h2>報表已完成</h2><p id="result-period"></p></div><a id="download" class="button-primary download-button" href="#">下載 OUTPUT Excel <span aria-hidden="true">↓</span></a></div>
+        <div class="metrics"><div><span>ACT 來源筆數</span><b id="act-count">0</b></div><div><span>BUDGET 來源筆數</span><b id="budget-count">0</b></div><div><span>需說明的 Tech Node</span><b id="remark-count">0</b></div></div>
+        <div id="warnings" class="alert warning" hidden></div>
+        <div class="preview-heading"><h3>Monthly Pivot 預覽</h3><div><span class="legend high">≥115%</span><span class="legend low">≤85%</span></div></div>
+        <p class="preview-note">金額：百萬元。完整客戶與品號數字另附在 Excel「差異明細」。</p>
+        <div class="table-wrap"><table id="preview-table"><thead><tr><th rowspan="2">Tech Node</th><th colspan="2">TSMC</th><th colspan="2">Non-T</th><th colspan="2" class="total-heading">Total（含 Service）</th><th colspan="2">TSMC vs 預算</th><th colspan="2">Non-T vs 預算</th><th rowspan="2" class="remark-heading">Remark</th></tr><tr><th>ACT</th><th>BUDGET</th><th>ACT</th><th>BUDGET</th><th class="total-heading">ACT</th><th class="total-heading">BUDGET</th><th>增減額</th><th>達成率</th><th>增減額</th><th>達成率</th></tr></thead><tbody id="preview-body"></tbody></table></div>
+        <p id="preview-truncated" class="preview-note" hidden>預覽只顯示前 200 列；下載的 Excel 保留全部內容。</p>
+      </section>
+      <footer>Monthly Report <span>·</span> 本機運算 <span>·</span> 用右上角「關閉程式」結束服務並清除暫存；已下載的 Excel 會保留。</footer>
+    </div>
+  </main>
+</body>
+</html>

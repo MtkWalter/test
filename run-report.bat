@@ -6,5 +6,5 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-".venv\Scripts\python.exe" -m excel_insights.monthly_app
+".venv\Scripts\python.exe" -m excel_insights.monthly_web
 if errorlevel 1 pause

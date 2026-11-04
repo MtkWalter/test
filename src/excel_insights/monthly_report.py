@@ -81,7 +81,10 @@ class ReportRules:
 
     @classmethod
     def load(cls, path: str | Path) -> ReportRules:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8-sig")))
+
+    @classmethod
+    def from_dict(cls, data: object) -> ReportRules:
         allowed = {"tsmc_values", "non_t_values", "node_aliases", "fiscal_start_month"}
         if not isinstance(data, dict) or set(data) - allowed:
             raise ValueError("分類設定格式不正確，或包含未知的設定名稱。")
@@ -94,6 +97,9 @@ class ReportRules:
                 raise ValueError(f"{name} 必須是文字清單。")
         if data.get("tsmc_values", []) is None:
             raise ValueError("tsmc_values 不能為 null。")
+        if "fiscal_start_month" in data and (isinstance(data["fiscal_start_month"], bool) or
+                                             not isinstance(data["fiscal_start_month"], int)):
+            raise ValueError("會計年度起始月份必須是整數。")
         return cls(**data)
 
     def segment(self, value: object) -> str:

@@ -1,16 +1,22 @@
-# Monthly Report — INPUT Excel → OUTPUT Excel
+# Monthly Report — 本機瀏覽器報表工作台
 
-這是新增的獨立 Python 桌面程式，Windows 執行檔名稱為 **MonthlyReport.exe**。原有的 ExcelInsights 程式仍可照常使用。所有處理在本機執行，不需要 Microsoft Excel，也不需上傳資料。
+這是獨立的 Python 本機程式，Windows 執行檔名稱為 **MonthlyReport.exe**，啟動後以預設瀏覽器操作。原有的 ExcelInsights 程式仍可照常使用。計算規則沿用先前確認的單月、AS 金額來源、BI 客戶與 Remark 排序，不需要 Microsoft Excel。
 
 ## 使用 Windows EXE
 
-1. 解開 `MonthlyReport-Windows-x64.zip`，執行 `MonthlyReport.exe`。
-2. 選擇 INPUT `.xlsx` 或 `.xlsm`，再選擇來源工作表。
+1. 解開 `MonthlyReport-Windows-x64.zip`，執行 `MonthlyReport.exe`，會自動開啟本機瀏覽器頁面。
+2. 在頁面選擇或拖曳 INPUT `.xlsx`／`.xlsm`，再選擇來源工作表。
 3. 選擇**西元年、月份（單月）**與年度標籤，例如 `2026 / 09 / FY27`。
-4. 視需要開啟「客群／Tech Node 分類設定」調整分類。
-5. 選擇 OUTPUT `.xlsx`，點「產生 OUTPUT Excel」。成功後可直接開啟結果。
+4. 視需要展開「客群與 Tech Node 分類」調整、載入或儲存設定。
+5. 輸入下載檔名，點「產生 OUTPUT」。網頁會顯示進度、來源筆數、資料提醒及報表預覽；可展開完整 Remark。
+6. 點「下載 OUTPUT Excel」，儲存位置由瀏覽器下載設定決定。
+7. 完成後點右上角「關閉程式」，結束本機服務並清除暫存；已下載的結果會保留。僅關閉分頁不會結束背景程式。
 
-Windows EXE 已包含 Python 與必要套件；使用者不需另外安裝 Python。請把結果存到有寫入權限的資料夾。若 Excel 正開啟同名輸出檔，請先關閉檔案再重新產生。來源檔不會被覆寫。修改來源或分類後，請重新產生 OUTPUT；輸出金額為當次計算的數值，不依賴 Excel 重新計算公式。
+Windows EXE 包含 Python、必要套件與全部網頁資源，不需另外安裝 Python、啟動 Node 或連線下載網頁資源。請用 Edge／Chrome／Firefox 等現代瀏覽器。輸入檔不會被覆寫；修改來源或分類後請重新產生 OUTPUT。結果是當次計算的快照，不依賴 Excel 重新計算公式。
+
+### Excel 在哪裡處理？
+
+EXE 只在 `127.0.0.1` 啟動本機服務，自動選擇可用連接埠。頁面中的選檔／上傳，是把檔案傳給**同一台電腦上的 Python 程式**，不是外部網站。原始檔的工作副本、計算與暫存 OUTPUT 都在本機暫存資料夾；正常以「關閉程式」結束時清除。GitHub 只負責下載程式與更新，不接收使用者的 Excel。頁面與程式不需要網際網路即可運作。
 
 輸出包含三張工作表：
 
@@ -99,7 +105,7 @@ NON_T_UP +30.0M：PL_E +30.0M
 - BB 為 `Service`、BM 空白時獨立列 `Service`，不自行分攤至製程分類；BF 仍決定 TSMC／Non-T。
 - 一般範例節點依模板順序排列；新節點也會列出，沒有資料的模板列留白。
 
-可在視窗「分類設定」修改、另存、載入。隨包附的 `monthly-report-rules.json` 是可載入的預設，**不會在程式啟動時默默套用旁邊的檔案**；請在設定視窗載入需要的版本。CLI 用 `--rules` 指定。這些分類會逐次寫入 OUTPUT 的「報表資訊」。
+可在網頁的「客群與 Tech Node 分類」修改、儲存與載入。隨包附的 `monthly-report-rules.json` 是可載入的預設；請在頁面載入需要的版本。CLI 用 `--rules` 指定。這些分類會逐次寫入 OUTPUT 的「報表資訊」。
 
 ## Python 開發與命令列
 
@@ -107,7 +113,7 @@ NON_T_UP +30.0M：PL_E +30.0M
 
 ```sh
 uv sync --locked --extra dev
-uv run --no-sync python -m excel_insights.monthly_app
+uv run --no-sync python -m excel_insights.monthly_web
 ```
 
 Windows 也可先執行既有 `setup.bat`，再執行新增的 `run-report.bat`。CLI 不需要顯示器：
@@ -118,7 +124,9 @@ uv run --no-sync python -m excel_insights.monthly_report \
   --fiscal-year FY27 --sheet 重建資料
 ```
 
-`--sheet` 在只有一張符合來源工作表時可省略。已有 OUTPUT 時預設拒絕覆寫，CLI 須明確加 `--overwrite`；視窗會要求確認。`--summary-json result.json` 可儲存當次結果或錯誤，失敗時 exit code 為 1。獨立 EXE 亦可透過上述參數執行批次模式，以 `--summary-json` 讀取結果。
+`--sheet` 在只有一張符合來源工作表時可省略。CLI 已有 OUTPUT 時預設拒絕覆寫，須明確加 `--overwrite`；瀏覽器下載的同名檔案則依瀏覽器設定處理。`--summary-json result.json` 可儲存當次結果或錯誤，失敗時 exit code 為 1。獨立 EXE 亦可透過上述參數執行批次模式，以 `--summary-json` 讀取結果。
+
+開發時可加 `--no-browser` 只啟動服務、不自動開啟瀏覽器，終端會列印本機位址；`--port` 可指定本機連接埠。服務固定綁定 `127.0.0.1`，不提供外網監聽選項。
 
 雲端家目錄唯讀時，命令前設定 `XDG_CACHE_HOME=/workspace/.cache`、`UV_CACHE_DIR=/workspace/.cache/uv`；沒有顯示器的測試加 `QT_QPA_PLATFORM=offscreen`。
 
@@ -126,6 +134,8 @@ uv run --no-sync python -m excel_insights.monthly_report \
 python -m excel_insights.report_sample artifacts/report-demo-input.xlsx
 QT_QPA_PLATFORM=offscreen python -m pytest -q
 ```
+
+實際瀏覽器測試另使用可選的 `browser-test` extra：`uv sync --locked --extra dev --extra browser-test`，再以 `playwright install chromium` 安裝測試瀏覽器。Linux 若已有 `/usr/bin/chromium` 可直接使用；Windows CI 使用已安裝的 Edge（`REPORT_BROWSER_CHANNEL=msedge`）。這些測試工具不會包入使用者的 EXE。
 
 ## 產生 Windows EXE
 
@@ -137,6 +147,6 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q
 ./scripts/publish-report-windows.ps1
 ```
 
-成功才會產生 `artifacts/MonthlyReport-Windows-x64.zip` 與 `Report-SHA256SUMS.txt`；內含 `MonthlyReport.exe`、使用說明、分類設定、合成 INPUT／OUTPUT。打包驗證實際透過 Qt 視窗的背景工作流程寫出 Excel，再檢查金額、比率、雙客群 Remark、門檻與排序。程式尚未簽章。
+成功才會產生 `artifacts/MonthlyReport-Windows-x64.zip` 與 `Report-SHA256SUMS.txt`；內含 `MonthlyReport.exe`、使用說明、分類設定、合成 INPUT／OUTPUT。打包驗證會啟動真正的 EXE，檢查打包網頁資源，再透過本機 HTTP 選檔、產生、下載 Excel，檢查金額、比率、雙客群 Remark、門檻與排序。CI 另用真正的 Edge 驗證完整網頁操作。瀏覽器版 EXE 不需 Qt 桌面執行環境。程式尚未簽章。
 
-現有 GitHub Actions **Python Windows build and test** 已加入第二個 EXE 的建置；成功後下載 **MonthlyReport-windows-x64** artifact。Linux 可執行原始碼、離屏測試與產生 Excel；**Windows EXE 的建置與驗證必須在 Windows 執行**。
+現有 GitHub Actions **Python Windows build and test** 已加入瀏覽器版 EXE 建置；成功後下載 **MonthlyReport-windows-x64** artifact。Linux 可執行相同本機網頁及產生 Excel；**Windows EXE 的建置與驗證在 Windows 執行**。
