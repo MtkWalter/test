@@ -180,3 +180,27 @@ def test_report_rules_dictionary_validation():
     with pytest.raises(ValueError):
         ReportRules.from_dict({"non_t_values": "not-a-list"})
     assert ReportRules.from_dict(ReportRules().to_dict()).to_dict() == ReportRules().to_dict()
+
+
+def test_raw_export_job_includes_complete_errors_and_source_package(web_server, tmp_path):
+    from tests.test_raw_export import assert_raw_preserved
+    source = create_sample(tmp_path / "input.xlsx")
+    book = load_workbook(source)
+    book.active["AS3"] = "invalid actual"
+    book.active["BF3"] = None
+    book.active["BM3"] = None
+    book.save(source)
+    book.close()
+    item = upload(web_server, source)
+    payload = {"upload_id": item["id"], "sheet": item["report_sheets"][0], "year": 2026, "month": 9, "include_raw": True}
+    status, _, body = request(web_server, "api/jobs", payload)
+    assert status == 202
+    job = wait_for_job(web_server, json.loads(body)["id"])
+    assert job["status"] == "success", job
+    assert job["result"]["report_generated"] is False
+    assert len(job["result"]["issues"]) == 3
+    assert job["preview"]["rows"] == []
+    status, _, content = request(web_server, job["download"])
+    output = tmp_path / "download.xlsx"
+    output.write_bytes(content)
+    assert_raw_preserved(source, output)

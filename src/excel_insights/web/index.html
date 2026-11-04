@@ -65,17 +65,27 @@
           <div class="rule-summary"><span><b>AS</b> 最終金額來源</span><span><b>BI</b> END USER 客戶</span><span><b>BC</b> P/N 品號</span><span>主表整數 · Remark 一位小數</span></div>
           <div id="form-error" class="alert error" role="alert" hidden></div>
           <div class="generate-row"><p>達成率 <b>≥115%</b> 或 <b>≤85%</b> 自動產生 Remark。<br>全部客戶、品號列出，同方向差額優先。</p><button id="generate" class="button-primary" type="submit" disabled>產生 OUTPUT <span aria-hidden="true">→</span></button></div>
+          <div class="raw-export-row"><div><b>格式有錯也要保留完整資料？</b><p>保留所有原始工作表、全部期間、公式與格式，另附完整錯誤清單。驗證通過時也會加入單月報表。</p></div><button id="export-raw" class="button-outline" type="button" disabled>完整保留 Raw Data 匯出</button></div>
         </section>
       </form>
+      <section id="diagnostics" class="card" aria-labelledby="diagnostic-title" hidden>
+        <div class="diagnostic-heading"><div><h2 id="diagnostic-title">完整錯誤清單</h2><p id="diagnostic-count" role="status"></p></div><button id="download-diagnostics" class="button-outline" type="button">下載完整清單 HTML</button></div>
+        <p class="setting-note">依來源列號排列；清單可上下及左右捲動。每筆原始值與原因完整顯示，沒有筆數截斷。</p>
+        <div id="diagnostic-scroll" class="diagnostic-scroll" tabindex="0" role="region" aria-label="可捲動的完整錯誤清單"><table class="diagnostic-table"><thead><tr><th>序號</th><th>工作表</th><th>來源列號</th><th>欄位位置</th><th>欄位名稱</th><th>原始值</th><th>錯誤原因</th></tr></thead><tbody id="diagnostic-body"></tbody></table></div>
+        <div class="diagnostic-pagination"><button id="errors-prev" class="button-outline compact" type="button">上一頁</button><span id="errors-page"></span><button id="errors-next" class="button-outline compact" type="button">下一頁</button></div>
+      </section>
       <section id="progress-card" class="card progress-card" aria-live="polite" hidden><div class="progress-heading"><span class="spinner" aria-hidden="true"></span><div><h2 id="progress-title">正在處理資料</h2><p id="progress-message"></p></div></div><progress id="progress-bar" max="100"></progress></section>
       <section id="results" class="card results-card" hidden>
-        <div class="section-heading result-heading"><div class="section-number done">✓</div><div><h2>報表已完成</h2><p id="result-period"></p></div><a id="download" class="button-primary download-button" href="#">下載 OUTPUT Excel <span aria-hidden="true">↓</span></a></div>
+        <div class="section-heading result-heading"><div class="section-number done">✓</div><div><h2 id="result-title">報表已完成</h2><p id="result-period"></p></div><a id="download" class="button-primary download-button" href="#">下載 OUTPUT Excel <span aria-hidden="true">↓</span></a></div>
         <div class="metrics"><div><span>ACT 來源筆數</span><b id="act-count">0</b></div><div><span>BUDGET 來源筆數</span><b id="budget-count">0</b></div><div><span>需說明的 Tech Node</span><b id="remark-count">0</b></div></div>
         <div id="warnings" class="alert warning" hidden></div>
+        <p><button id="download-result-html" class="button-outline compact" type="button">下載結果 HTML</button> <a id="view-errors" class="button-link" href="#diagnostics" hidden>查看完整錯誤清單 ↑</a></p>
+        <div id="report-preview">
         <div class="preview-heading"><h3>Monthly Pivot 預覽</h3><div><span class="legend high">≥115%</span><span class="legend low">≤85%</span></div></div>
         <p class="preview-note">金額：百萬元。完整客戶與品號數字另附在 Excel「差異明細」。</p>
         <div class="table-wrap"><table id="preview-table"><thead><tr><th rowspan="2">Tech Node</th><th colspan="2">TSMC</th><th colspan="2">Non-T</th><th colspan="2" class="total-heading">Total（含 Service）</th><th colspan="2">TSMC vs 預算</th><th colspan="2">Non-T vs 預算</th><th rowspan="2" class="remark-heading">Remark</th></tr><tr><th>ACT</th><th>BUDGET</th><th>ACT</th><th>BUDGET</th><th class="total-heading">ACT</th><th class="total-heading">BUDGET</th><th>增減額</th><th>達成率</th><th>增減額</th><th>達成率</th></tr></thead><tbody id="preview-body"></tbody></table></div>
         <p id="preview-truncated" class="preview-note" hidden>預覽只顯示前 200 列；下載的 Excel 保留全部內容。</p>
+        </div>
       </section>
       <footer>Monthly Report <span>·</span> 本機運算 <span>·</span> 用右上角「關閉程式」結束服務並清除暫存；已下載的 Excel 會保留。</footer>
     </div>

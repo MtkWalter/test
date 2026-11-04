@@ -2,6 +2,8 @@
 
 **直接開網址的純網頁版**已加入：由 GitHub Pages 提供靜態網站，Python 報表核心在瀏覽器內執行，不需 EXE 或安裝 Python，Excel 不會上傳到伺服器。建置與發布使用 **Publish report website** 工作流程；操作、隱私與首次啟用 Pages 的說明見 [網址版使用說明](docs/report-website.md)。
 
+新增「**完整保留 Raw Data 匯出**」：格式驗證失敗也能將全部原始工作表與完整錯誤清單寫入 OUTPUT。錯誤畫面可捲動、切頁查看，另可「**下載結果 HTML**」直接離線開檔查看結果及所有錯誤。
+
 另有獨立的 **MonthlyReport.exe 本機瀏覽器報表工作台**，執行後自動開啟瀏覽器，在網頁選擇 INPUT、年月、分類，預覽並下載 OUTPUT Excel。Excel 與運算都留在本機。已保留門檻顏色與 END USER／P/N Remark 排序。使用 `run-report.bat` 開發執行，`build-report.bat` 在 Windows 打包；完整規則見 [單月報表使用說明](docs/monthly-report.md)。通用工作台的預設匯入容量另可透過 `EXCEL_INSIGHTS_MAX_CELLS`、`EXCEL_INSIGHTS_TOTAL_CELLS` 調整。
 
 這是原 C# / WPF 初版的 Python 替代實作（v0.3.2）。使用 **PySide6 + pandas**，提供本機自動判讀、可修改的報表預覽與範本 Excel 匯出，也保留多檔匯入、分組統計與 CSV。資料全程在本機處理，不上傳、不修改來源檔，也不需要安裝 Microsoft Excel。

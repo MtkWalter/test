@@ -14,10 +14,10 @@ def _display(value, *, percent=False):
     return f"{amount.quantize(Decimal(1), rounding=ROUND_HALF_UP):,}" + ("%" if percent else "")
 
 
-def preview_workbook(path: Path) -> dict:
+def preview_workbook(path: Path, sheet_name: str = "monthly pivot") -> dict:
     book = load_workbook(path, read_only=True, data_only=True)
     try:
-        sheet = book["monthly pivot"]
+        sheet = book[sheet_name]
         rows = []
         truncated = False
         for row in sheet.iter_rows(min_row=4, max_col=12):

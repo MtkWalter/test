@@ -56,7 +56,7 @@ def build(destination: Path = ROOT / "_site"):
                 if path.is_file():
                     add_file(archive, path, name)
     with ZipFile(destination / "report-engine.zip", "w", ZIP_DEFLATED) as archive:
-        for name in ("__init__.py", "monthly_report.py", "report_preview.py"):
+        for name in ("__init__.py", "monthly_report.py", "report_preview.py", "raw_export.py"):
             add_file(archive, ROOT / "src/excel_insights" / name, "excel_insights/" + name)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     manifest = {"revision": revision, "runtime": "0.29.5", "rules": ReportRules().to_dict(),

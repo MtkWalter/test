@@ -23,7 +23,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
-from .monthly_report import ReportRules, fiscal_label, generate_report, inspect_workbook
+from .monthly_report import ReportRules, ReportValidationError, fiscal_label, generate_report
+from .raw_export import generate_report_with_raw, inspect_raw_workbook
 from .report_preview import preview_workbook
 
 JSON_LIMIT = 512 * 1024
@@ -35,6 +36,8 @@ class Upload:
     path: Path
     name: str
     sheets: list[str]
+    report_sheets: list[str]
+    output_extension: str = ".xlsx"
 
 
 @dataclass
@@ -46,6 +49,7 @@ class Job:
     result: dict | None = None
     preview: dict | None = None
     error: str | None = None
+    issues: list | None = None
     path: Path | None = None
 
 
@@ -99,23 +103,28 @@ class LocalReportServer(ThreadingHTTPServer):
                 raise ValueError("找不到 INPUT，請重新選擇 Excel 檔案。")
             if payload["sheet"] not in upload.sheets:
                 raise ValueError("請選擇有效的來源工作表。")
-            for name in ("year", "month"):
-                if isinstance(payload[name], bool) or not isinstance(payload[name], int):
-                    raise ValueError("年份與月份必須是整數。")
-            if not 1900 <= payload["year"] <= 9999 or not 1 <= payload["month"] <= 12:
-                raise ValueError("年份或月份超出範圍。")
-            rules = ReportRules.from_dict(payload.get("rules", {}))
-            fy = payload.get("fiscal_year") or fiscal_label(payload["year"], payload["month"], rules.fiscal_start_month)
-            if not isinstance(fy, str) or not re.fullmatch(r"FY\d{2}", fy.strip(), re.I):
-                raise ValueError("年度標籤請使用 FY27 這類格式。")
-            default_name = f"monthly-output-{payload['year']}{payload['month']:02d}.xlsx"
+            if payload.get("include_raw"):
+                rules, fy = payload.get("rules"), payload.get("fiscal_year")
+            else:
+                if payload["sheet"] not in upload.report_sheets:
+                    raise ValueError("所選工作表缺少必要報表欄位。")
+                for name in ("year", "month"):
+                    if isinstance(payload[name], bool) or not isinstance(payload[name], int):
+                        raise ValueError("年份與月份必須是整數。")
+                if not 1900 <= payload["year"] <= 9999 or not 1 <= payload["month"] <= 12:
+                    raise ValueError("年份或月份超出範圍。")
+                rules = ReportRules.from_dict(payload.get("rules", {}))
+                fy = payload.get("fiscal_year") or fiscal_label(payload["year"], payload["month"], rules.fiscal_start_month)
+                if not isinstance(fy, str) or not re.fullmatch(r"FY\d{2}", fy.strip(), re.I):
+                    raise ValueError("年度標籤請使用 FY27 這類格式。")
+            default_name = "monthly-output-raw.xlsx" if payload.get("include_raw") else f"monthly-output-{payload['year']}{payload['month']:02d}.xlsx"
+            extension = upload.output_extension if payload.get("include_raw") else ".xlsx"
             filename = str(payload.get("filename") or default_name)
             filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).strip(" .")
-            if not filename.lower().endswith(".xlsx"):
-                filename += ".xlsx"
-            filename = filename[:115] + ".xlsx" if len(filename) > 120 else filename
+            filename = re.sub(r"\.(xlsx|xlsm)$", "", filename, flags=re.I) + extension
+            filename = filename[:115] + extension if len(filename) > 120 else filename
             job_id = uuid.uuid4().hex
-            job = Job(job_id, filename, path=self.root / f"result-{job_id}.xlsx")
+            job = Job(job_id, filename, path=self.root / f"result-{job_id}{extension}")
             self.jobs[job_id] = job
             self.executor.submit(self._generate, job, upload, payload, fy, rules)
             return job
@@ -125,10 +134,15 @@ class LocalReportServer(ThreadingHTTPServer):
             with self.lock:
                 job.progress = message
         try:
-            result = generate_report(upload.path, job.path, payload["year"], payload["month"],
-                                     sheet=payload["sheet"], fiscal_year=fiscal_year,
-                                     rules=rules, progress=progress)
-            preview = preview_workbook(job.path)
+            if payload.get("include_raw"):
+                result = generate_report_with_raw(upload.path, job.path, payload["year"], payload["month"],
+                    sheet=payload["sheet"], fiscal_year=fiscal_year, rules=rules,
+                    settings_error=payload.get("settings_error"), progress=progress)
+            else:
+                result = generate_report(upload.path, job.path, payload["year"], payload["month"],
+                                         sheet=payload["sheet"], fiscal_year=fiscal_year,
+                                         rules=rules, progress=progress)
+            preview = preview_workbook(job.path, result.get("preview_sheet") or "monthly pivot") if result.get("report_generated", True) else {"rows": [], "truncated": False}
             with self.lock:
                 job.result = {k: v for k, v in result.items() if k != "output"}
                 job.preview = preview
@@ -136,7 +150,8 @@ class LocalReportServer(ThreadingHTTPServer):
                 job.status = "success"
         except Exception as exc:
             with self.lock:
-                job.error = str(exc)
+                job.error = (f"來源資料共有 {len(exc.issues):,} 項錯誤，請查看完整清單或匯出 Raw Data。\n" + exc.issues[0]["message"]) if isinstance(exc, ReportValidationError) else str(exc)
+                job.issues = exc.issues if isinstance(exc, ReportValidationError) else []
                 job.progress = "請依錯誤訊息修正來源或設定。"
                 job.status = "error"
 
@@ -208,7 +223,7 @@ class ReportHandler(BaseHTTPRequestHandler):
                         self._json({"error": "找不到報表工作。"}, HTTPStatus.NOT_FOUND)
                     else:
                         self._json({"id": job.id, "status": job.status, "progress": job.progress,
-                                    "result": job.result, "preview": job.preview, "error": job.error,
+                                    "result": job.result, "preview": job.preview, "error": job.error, "issues": job.issues,
                                     "filename": job.filename, "download": f"api/download/{job.id}" if job.status == "success" else None})
             elif route.startswith("api/download/"):
                 job_id = route.removeprefix("api/download/")
@@ -219,7 +234,8 @@ class ReportHandler(BaseHTTPRequestHandler):
                         return
                     path, filename = job.path, job.filename
                 with self.server.transfer():
-                    self._headers(HTTPStatus.OK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", path.stat().st_size, filename=filename)
+                    mime = "application/vnd.ms-excel.sheet.macroEnabled.12" if path.suffix == ".xlsm" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    self._headers(HTTPStatus.OK, mime, path.stat().st_size, filename=filename)
                     with path.open("rb") as stream:
                         shutil.copyfileobj(stream, self.wfile, length=1024 * 1024)
             else:
@@ -301,12 +317,12 @@ class ReportHandler(BaseHTTPRequestHandler):
                     stream.write(block)
                     remaining -= len(block)
             try:
-                layouts = inspect_workbook(path)
+                catalog = inspect_raw_workbook(path)
             except Exception as exc:
                 raise ValueError(f"無法辨識來源 Excel：{exc}") from exc
             with self.server.lock:
-                self.server.uploads[upload_id] = Upload(path, filename, [s.name for s in layouts])
-            self._json({"id": upload_id, "name": filename, "bytes": length, "sheets": [s.name for s in layouts]}, HTTPStatus.CREATED)
+                self.server.uploads[upload_id] = Upload(path, filename, catalog["sheets"], catalog["report_sheets"], catalog["output_extension"])
+            self._json({"id": upload_id, "name": filename, "bytes": length, **catalog}, HTTPStatus.CREATED)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise

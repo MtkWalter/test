@@ -42,6 +42,25 @@ NUMERIC = re.compile(r"^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[e
 SCENARIO = re.compile(r"^FY(\d{2}|\d{4})\s*(act|ori|rev)$", re.I)
 
 
+class ReportValidationError(ValueError):
+    """All source diagnostics, without a first-N-rows limit."""
+
+    def __init__(self, issues: list[dict]):
+        self.issues = issues
+        super().__init__(f"來源資料需要修正，尚未產生報表（共 {len(issues):,} 項錯誤）。")
+
+    def __str__(self):
+        return super().__str__() + "\n" + "\n".join(
+            f"工作表「{i['sheet']}」第 {i['row']} 列 [{i['column']}]：{i['message']}；原始值：{i['value']}"
+            for i in self.issues)
+
+
+def diagnostic_value(value: object) -> str:
+    if value is None:
+        return "（空白）"
+    return str(value)
+
+
 def text(value: object) -> str:
     return "" if value is None else unicodedata.normalize("NFKC", str(value)).strip()
 
@@ -325,8 +344,7 @@ def read_report(path: str | Path, year: int, month: int, *, sheet: str | None = 
     if not re.fullmatch(r"FY\d{2}", fy):
         raise ValueError("年度標籤請使用 FY27 這類格式。")
     result = ReportData(path, layout.name, year, month, fy, rules)
-    errors: list[str] = []
-    error_count = 0
+    errors: list[dict] = []
     valid_amounts = 0
     warning_counts: dict[str, int] = defaultdict(int)
     book = load_workbook(path, read_only=True, data_only=True)
@@ -348,41 +366,61 @@ def read_report(path: str | Path, year: int, month: int, *, sheet: str | None = 
             if not match or int(match[1]) % 100 != int(fy[2:]) or match[2].lower() == "rev":
                 continue
             values = {name: row[index] for name, index in layout.columns.items()}
+
+            def record_error(fields, exc):
+                fields = [f for f in fields if f in layout.columns]
+                columns = ", ".join(get_column_letter(layout.columns[f] + 1) for f in fields)
+                raw = "; ".join(f"{get_column_letter(layout.columns[f] + 1)}={diagnostic_value(formula_row[layout.columns[f]].value)}"
+                                for f in fields)
+                errors.append({"sheet": layout.name, "row": row_number, "column": columns,
+                               "field": " / ".join(HEADERS[f][0] for f in fields),
+                               "value": raw, "message": str(exc)})
+
             try:
                 if period(values) != (year, month):
                     continue
-                scenario = match[2].lower()
+            except ValueError as exc:
+                record_error(("ym", "year", "month", "date"), exc)
+                continue
+            scenario = match[2].lower()
+            before = len(errors)
+            try:
                 index = layout.columns["amount"]
                 if formula_row[index].data_type == "f" and values["amount"] is None:
                     raise ValueError("AS 公式沒有已儲存的計算結果，請先以 Excel／LibreOffice 重新計算並儲存。")
                 value = amount(values["amount"])
                 if value is None and scenario == "act":
                     raise ValueError("AS 實績金額空白；請補齊來源金額，真正的零值請填 0。")
-                if value is None:
-                    warning_counts["預算金額缺值，所屬分類的預算與達成率顯示空白"] += 1
-                else:
-                    valid_amounts += 1
-                segment = rules.segment(values["segment"])
-                node = rules.node(values["node"], values.get("supplier"))
-                if not text(values["node"]):
-                    warning_counts["Service 的 BM 空白，獨立列為 Service，未分攤到其他節點"] += 1
-                customer = text(values["customer"]) or "（未填 END USER）"
-                product = text(values["product"]) or "（未填 P/N）"
-                if not text(values["customer"]):
-                    warning_counts["BI END USER 空白，使用「未填 END USER」分組，請補齊來源以正確辨識客戶"] += 1
-                if not text(values["product"]):
-                    warning_counts["BC P/N 空白，使用「未填 P/N」分組"] += 1
-                for target in (result.totals[(node, segment)], result.customers[(node, segment, customer)],
-                               result.products[(node, segment, customer, product)]):
-                    target.add(scenario, value)
-                result.counts[scenario] += 1
             except ValueError as exc:
-                error_count += 1
-                if len(errors) < 15:
-                    errors.append(f"第 {row_number} 列：{exc}")
-        if error_count:
-            suffix = f"\n另有 {error_count - len(errors)} 個錯誤。" if error_count > len(errors) else ""
-            raise ValueError("來源資料需要修正，尚未產生報表：\n" + "\n".join(errors) + suffix)
+                record_error(("amount",), exc)
+            try:
+                segment = rules.segment(values["segment"])
+            except ValueError as exc:
+                record_error(("segment",), exc)
+            try:
+                node = rules.node(values["node"], values.get("supplier"))
+            except ValueError as exc:
+                record_error(("node", "supplier"), exc)
+            if len(errors) != before:
+                continue
+            if value is None:
+                warning_counts["預算金額缺值，所屬分類的預算與達成率顯示空白"] += 1
+            else:
+                valid_amounts += 1
+            if not text(values["node"]):
+                warning_counts["Service 的 BM 空白，獨立列為 Service，未分攤到其他節點"] += 1
+            customer = text(values["customer"]) or "（未填 END USER）"
+            product = text(values["product"]) or "（未填 P/N）"
+            if not text(values["customer"]):
+                warning_counts["BI END USER 空白，使用「未填 END USER」分組，請補齊來源以正確辨識客戶"] += 1
+            if not text(values["product"]):
+                warning_counts["BC P/N 空白，使用「未填 P/N」分組"] += 1
+            for target in (result.totals[(node, segment)], result.customers[(node, segment, customer)],
+                           result.products[(node, segment, customer, product)]):
+                target.add(scenario, value)
+            result.counts[scenario] += 1
+        if errors:
+            raise ReportValidationError(errors)
         if not sum(result.counts.values()):
             raise ValueError(f"找不到 {year}/{month:02d} 的 {fy} act／ori 資料，請確認月份、年度標籤與工作表。")
         if not valid_amounts:

@@ -26,7 +26,7 @@
         const request = pending.get(message.id);
         if (!request) return;
         pending.delete(message.id);
-        if (message.error) request.reject(new Error(message.error));
+        if (message.error) request.reject(Object.assign(new Error(message.error), {issues: message.issues || []}));
         else request.resolve(message);
       };
       worker.onerror = (event) => {
@@ -84,15 +84,16 @@
         for (const url of urls) URL.revokeObjectURL(url);
         urls.clear(); jobs.clear();
         const id = crypto.randomUUID();
-        const filename = payload.filename.toLowerCase().endsWith(".xlsx") ? payload.filename : payload.filename + ".xlsx";
+        const extension = payload.include_raw ? currentUpload.output_extension : ".xlsx";
+        const filename = (payload.filename || "monthly-output").replace(/\.(xlsx|xlsm)$/iu, "") + extension;
         const job = {id, filename, status: "running", progress: "正在瀏覽器內計算月報…"};
         activeJob = job; jobs.set(id, job);
         rpc("generate", {...payload, id}).then((message) => {
-          const blob = new Blob([message.bytes], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+          const blob = new Blob([message.bytes], {type: extension === ".xlsm" ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
           job.download = URL.createObjectURL(blob); urls.add(job.download);
           job.result = message.value.result; job.preview = message.value.preview;
           job.progress = "OUTPUT Excel 已完成。"; job.status = "success";
-        }).catch((error) => {job.error = error.message; job.status = "error";});
+        }).catch((error) => {job.error = error.message; job.issues = error.issues || []; job.status = "error";});
         return {id};
       }
       if (path.startsWith("api/jobs/")) {

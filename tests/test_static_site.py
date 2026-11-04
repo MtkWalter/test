@@ -124,7 +124,7 @@ def test_static_site_large_workbook_over_old_limits(static_page, tmp_path):
     book.save(source)
     book.close()
     choose_input(page, source)
-    page.get_by_role("button", name="產生 OUTPUT").click()
+    page.locator("#export-raw").click()
     playwright.expect(page.locator("#results")).to_be_visible(timeout=300_000)
     playwright.expect(page.locator("#act-count")).to_have_text("50,001")
     playwright.expect(page.locator("#budget-count")).to_have_text("50,001")
@@ -132,12 +132,109 @@ def test_static_site_large_workbook_over_old_limits(static_page, tmp_path):
         page.locator("#download").click()
     output = tmp_path / "large-output.xlsx"
     captured.value.save_as(output)
-    book = load_workbook(output, data_only=True)
-    row = next(row for row in book.active if row[0].value == "N20")
+    book = load_workbook(output, data_only=True, read_only=True)
+    assert "來源" in book.sheetnames
+    row = next(row for row in book["monthly pivot"] if row[0].value == "N20")
     assert row[1].value == pytest.approx(5.750115)
     assert row[2].value == pytest.approx(5.0001)
     assert row[8].value == 1.15
     assert "Large Customer +0.8M" in row[11].value
     book.close()
+    assert all(method in {"GET", "HEAD"} for method, _ in requests)
+    assert not errors
+
+
+def test_static_site_raw_errors_roundtrip_and_offline_html(static_page, tmp_path):
+    page, url, requests, errors = static_page
+    source = create_sample(tmp_path / "errors.xlsx")
+    book = load_workbook(source)
+    sheet = book.active
+    for index in range(200):
+        number = 100 + index
+        for column, value in {"AS": f"bad-{index:03d} <img src=x onerror=alert(1)>", "BD": "FY27 act",
+                              "BF": None, "BM": None, "BB": "ordinary", "BI": "Customer", "BC": "PN",
+                              "BP": "202609", "BO": 2026, "BE": 9}.items():
+            sheet[f"{column}{number}"] = value
+    book.save(source)
+    book.close()
+    original = source.read_bytes()
+    choose_input(page, source)
+    page.get_by_role("button", name="產生 OUTPUT").click()
+    playwright.expect(page.locator("#diagnostics")).to_be_visible(timeout=120_000)
+    playwright.expect(page.locator("#diagnostic-count")).to_contain_text("600 項錯誤")
+    playwright.expect(page.locator("#diagnostic-body tr")).to_have_count(500)
+    assert page.locator("#diagnostic-scroll").evaluate("element => element.scrollHeight > element.clientHeight")
+    page.locator("#errors-next").click()
+    playwright.expect(page.locator("#diagnostic-body tr")).to_have_count(100)
+    assert "bad-199" in page.locator("#diagnostic-body").inner_text()
+    page.locator("#export-raw").click()
+    playwright.expect(page.locator("#results")).to_be_visible(timeout=120_000)
+    playwright.expect(page.locator("#result-title")).to_have_text("原始資料已完整保留")
+    playwright.expect(page.locator("#report-preview")).to_be_hidden()
+    playwright.expect(page.locator("#act-count")).to_have_text("—")
+    with page.expect_download() as captured:
+        page.locator("#download").click()
+    output = tmp_path / "raw-output.xlsx"
+    captured.value.save_as(output)
+    from tests.test_raw_export import assert_raw_preserved
+    assert_raw_preserved(source, output)
+    book = load_workbook(output)
+    assert len(list(book["完整錯誤清單"].values)) == 601
+    assert "monthly pivot" not in book.sheetnames
+    assert "bad-199" in book["銷售明細"]["AS299"].value
+    book.close()
+    with page.expect_download() as captured:
+        page.locator("#download-result-html").click()
+    html = tmp_path / "result.html"
+    captured.value.save_as(html)
+    assert "原始資料已完整保留" in html.read_text(encoding="utf-8")
+    origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}/"
+    assert all(method in {"GET", "HEAD"} and target.startswith(origin) for method, target in requests)
+    # Inspect the actual downloaded standalone HTML with networking disabled.
+    offline = page.context.new_page()
+    offline.route("http://**/*", lambda route: route.abort())
+    offline.route("https://**/*", lambda route: route.abort())
+    # set_content also works on managed browsers that forbid all file:// URLs.
+    offline.set_content(html.read_text(encoding="utf-8"))
+    assert offline.locator("tbody tr").count() == 600
+    assert "bad-199" in offline.locator("tbody").inner_text()
+    assert offline.locator("img, script").count() == 0
+    assert offline.locator(".scroll").last.evaluate("element => element.scrollHeight > element.clientHeight")
+    offline.close()
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    if os.environ.get("REPORT_PREVIEW_OUTPUT"):
+        destination = Path(os.environ["REPORT_PREVIEW_OUTPUT"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        preview = html.read_text(encoding="utf-8").replace("<h1>", '<p><b>功能預覽：以下為 600 項合成測試錯誤，並非您的原始資料。</b></p><h1>', 1)
+        destination.write_text(preview, encoding="utf-8")
+    assert source.read_bytes() == original
+    assert not errors
+
+    if os.environ.get("REPORT_EXPECTED_REVISION"):
+        example = page.request.get(url + "example-output.html")
+        assert example.ok and "600 項合成測試錯誤" in example.text()
+
+
+def test_static_site_missing_headers_raw_roundtrip(static_page, tmp_path):
+    page, url, requests, errors = static_page
+    source = tmp_path / "missing-headers.xlsx"
+    book = Workbook()
+    book.active.append(["Original", "No recognized report headers", "=1+1"])
+    book.save(source)
+    book.close()
+    page.locator("#input-file").set_input_files(source)
+    playwright.expect(page.locator("#export-raw")).to_be_enabled(timeout=120_000)
+    playwright.expect(page.locator("#generate")).to_be_disabled()
+    playwright.expect(page.locator("#form-error")).to_contain_text("必要欄名")
+    page.locator("#export-raw").click()
+    playwright.expect(page.locator("#results")).to_be_visible(timeout=120_000)
+    playwright.expect(page.locator("#result-title")).to_have_text("原始資料已完整保留")
+    with page.expect_download() as captured:
+        page.locator("#download").click()
+    output = tmp_path / "raw.xlsx"
+    captured.value.save_as(output)
+    from tests.test_raw_export import assert_raw_preserved
+    assert_raw_preserved(source, output)
     assert all(method in {"GET", "HEAD"} for method, _ in requests)
     assert not errors

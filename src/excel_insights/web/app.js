@@ -5,6 +5,10 @@ let upload = null;
 let busy = false;
 let closed = false;
 let autoFilename = "";
+let diagnosticItems = [];
+let diagnosticPage = 0;
+const ERRORS_PER_PAGE = 500;
+let completedJob = null;
 let defaultRules = {tsmc_values: ["tsmc"], non_t_values: null, node_aliases: {N2: "N2/A16", A16: "N2/A16", N3: "N3/N3E", N3E: "N3/N3E"}, fiscal_start_month: 4};
 
 function showError(message) {
@@ -13,13 +17,16 @@ function showError(message) {
 }
 function resetResult() {
   $("results").hidden = true;
+  completedJob = null;
+  showDiagnostics([]);
   $("step-results").classList.remove("active", "done");
 }
 function setBusy(value) {
   busy = value;
   for (const input of form.querySelectorAll("input, select, textarea, button")) input.disabled = value || closed;
   $("sheet").disabled = value || !upload || closed;
-  $("generate").disabled = value || !upload || closed;
+  $("generate").disabled = value || !upload || closed || !(upload.report_sheets || upload.sheets).includes($("sheet").value);
+  $("export-raw").disabled = value || !upload || closed;
   $("stop-app").disabled = value || closed;
   $("generate").textContent = value ? "正在處理…" : "產生 OUTPUT →";
 }
@@ -148,20 +155,27 @@ async function chooseInput(file) {
     upload = await uploadFile(file);
     $("file-name").textContent = upload.name;
     const size = upload.bytes < 1024 * 1024 ? `${(upload.bytes / 1024).toFixed(1)} KB` : `${(upload.bytes / 1024 / 1024).toFixed(1)} MB`;
-    $("file-size").textContent = `${size} · ${upload.sheets.length} 張可用工作表`;
+    $("file-size").textContent = `${size} · ${upload.sheets.length} 張工作表 · ${(upload.report_sheets || upload.sheets).length} 張可計算報表`;
     $("sheet").replaceChildren(...upload.sheets.map((name) => {const option = document.createElement("option"); option.value = name; option.textContent = name; return option;}));
     $("file-summary").hidden = false; $("drop-zone").hidden = true;
     $("step-source").classList.replace("active", "done");
     $("step-settings").classList.add("active");
+    if (upload.format_error) showError(`${upload.format_error}\n仍可使用「完整保留 Raw Data 匯出」，將原始資料與錯誤說明寫入 OUTPUT。`);
   } catch (error) { showError(error.message); }
   finally {setBusy(false); $("progress-card").hidden = true; $("input-file").value = "";}
 }
 function renderResult(job) {
   const result = job.result;
-  $("result-period").textContent = `${result.year} 年 ${String(result.month).padStart(2, "0")} 月 · ${result.fiscal_year} · ${result.sheet}`;
-  $("act-count").textContent = result.act_rows.toLocaleString("zh-TW");
-  $("budget-count").textContent = result.ori_rows.toLocaleString("zh-TW");
-  $("remark-count").textContent = result.remark_nodes.toLocaleString("zh-TW");
+  completedJob = job;
+  const generated = result.report_generated !== false;
+  $("result-title").textContent = generated ? "報表已完成" : "原始資料已完整保留";
+  $("result-period").textContent = generated ? `${result.year} 年 ${String(result.month).padStart(2, "0")} 月 · ${result.fiscal_year} · ${result.sheet}` : `已保留全部 ${result.raw_sheet_count} 張原始工作表；尚未產生統計，請查看完整錯誤清單。`;
+  $("act-count").textContent = result.act_rows?.toLocaleString("zh-TW") ?? "—";
+  $("budget-count").textContent = result.ori_rows?.toLocaleString("zh-TW") ?? "—";
+  $("remark-count").textContent = result.remark_nodes?.toLocaleString("zh-TW") ?? "—";
+  $("report-preview").hidden = !generated;
+  showDiagnostics(result.issues || []);
+  $("view-errors").hidden = !diagnosticItems.length;
   $("warnings").hidden = !result.warnings.length;
   $("warnings").textContent = result.warnings.join("\n");
   $("download").href = job.download;
@@ -193,25 +207,66 @@ function renderResult(job) {
   $("step-settings").classList.remove("active"); $("step-settings").classList.add("done"); $("step-results").classList.add("active");
   $("results").scrollIntoView({block: "start"});
 }
-async function generate(event) {
+async function generate(event, includeRaw = false) {
   event.preventDefault();
-  if (!upload || busy || closed || !form.reportValidity()) return;
+  if (!upload || busy || closed || (!includeRaw && !form.reportValidity())) return;
   showError(""); resetResult();
-  let rules;
-  try {rules = readRules();} catch (error) {showError(error.message); return;}
-  const payload = {upload_id: upload.id, sheet: $("sheet").value, year: Number($("year").value), month: Number($("month").value), fiscal_year: $("fiscal-year").value.toUpperCase(), filename: $("output-name").value, rules};
-  setBusy(true); progress("正在建立單月報表…");
+  let rules, settingsError;
+  try {rules = readRules();} catch (error) {if (!includeRaw) {showError(error.message); return;} settingsError = error.message;}
+  const payload = {upload_id: upload.id, sheet: $("sheet").value, year: Number($("year").value), month: Number($("month").value), fiscal_year: $("fiscal-year").value.toUpperCase(), filename: $("output-name").value, rules, include_raw: includeRaw, settings_error: settingsError};
+  setBusy(true); progress(includeRaw ? "正在建立包含全部 Raw Data 的 OUTPUT…" : "正在建立單月報表…");
   try {
     const created = await api("api/jobs", payload);
     for (;;) {
       const job = await api(`api/jobs/${created.id}`);
       progress(job.progress);
       if (job.status === "success") {renderResult(job); break;}
-      if (job.status === "error") throw new Error(job.error);
+      if (job.status === "error") {showDiagnostics(job.issues || []); throw new Error(job.error);}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   } catch (error) {showError(error.message); $("form-error").scrollIntoView({block: "center"});}
   finally {setBusy(false); $("progress-card").hidden = true;}
+}
+
+function renderDiagnosticsPage() {
+  const start = diagnosticPage * ERRORS_PER_PAGE;
+  const fragment = document.createDocumentFragment();
+  for (let i = start; i < Math.min(start + ERRORS_PER_PAGE, diagnosticItems.length); i++) {
+    const issue = diagnosticItems[i];
+    const row = document.createElement("tr");
+    for (const value of [i + 1, issue.sheet, issue.row, issue.column, issue.field, issue.value, issue.message]) {
+      const cell = document.createElement("td"); cell.textContent = String(value ?? ""); row.append(cell);
+    }
+    fragment.append(row);
+  }
+  $("diagnostic-body").replaceChildren(fragment);
+  $("diagnostic-scroll").scrollTop = 0;
+  const pages = Math.max(1, Math.ceil(diagnosticItems.length / ERRORS_PER_PAGE));
+  $("errors-page").textContent = `第 ${diagnosticPage + 1} / ${pages} 頁 · 每頁最多 ${ERRORS_PER_PAGE} 項`;
+  $("errors-prev").disabled = diagnosticPage === 0;
+  $("errors-next").disabled = diagnosticPage + 1 >= pages;
+}
+function showDiagnostics(issues) {
+  diagnosticItems = issues; diagnosticPage = 0;
+  $("diagnostics").hidden = !issues.length;
+  $("diagnostic-count").textContent = `共 ${issues.length.toLocaleString("zh-TW")} 項錯誤 · 所有頁面與下載檔皆保留完整資訊`;
+  renderDiagnosticsPage();
+}
+function downloadHTML(includeReport = false) {
+  const escape = (value) => String(value ?? "").replace(/[&<>"']/gu, (character) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[character]));
+  const row = (values, tag = "td") => `<tr>${values.map((value) => `<${tag}>${escape(value)}</${tag}>`).join("")}</tr>`;
+  let report = "";
+  if (includeReport && completedJob) {
+    const result = completedJob.result;
+    report = `<h2>${escape($("result-title").textContent)}</h2><p>${escape($("result-period").textContent)}</p><pre>${escape(result.warnings.join("\n"))}</pre>`;
+    if (result.report_generated !== false) {
+      report += `<p>金額：百萬元。此 HTML 為畫面預覽，完整報表及原始資料請下載 OUTPUT Excel。</p><div class="scroll"><table><thead>${row(["Tech Node", "TSMC ACT", "TSMC BUDGET", "Non-T ACT", "Non-T BUDGET", "Total ACT", "Total BUDGET", "TSMC 增減", "TSMC 達成率", "Non-T 增減", "Non-T 達成率", "Remark"], "th")}</thead><tbody>${completedJob.preview.rows.map((item) => row(item.cells)).join("")}</tbody></table></div>`;
+    }
+  }
+  const html = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OUTPUT 結果與完整錯誤清單</title><style>body{font:14px/1.7 system-ui,sans-serif;margin:30px;color:#244450;background:#f6f9fa}h1{font-size:24px}h2{font-size:19px}p,pre{white-space:pre-wrap;overflow-wrap:anywhere}.scroll{max-height:65vh;overflow:auto;border:1px solid #c8d7dd;background:white;margin-bottom:24px}table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}td,th{padding:10px;border-bottom:1px solid #e2eaed;border-right:1px solid #e2eaed;text-align:left;vertical-align:top;min-width:70px;white-space:pre-wrap;overflow-wrap:anywhere}th{position:sticky;top:0;background:#e5eff1;z-index:1}td:nth-last-child(-n+2){min-width:280px;max-width:700px}</style><h1>OUTPUT 結果與完整錯誤清單</h1><p>原始檔：${escape(upload?.name)}\n匯出時間：${escape(new Date().toLocaleString("zh-TW"))}\n本 HTML 可離線開啟，包含匯出時的結果與全部錯誤資訊。</p>${report}<h2>完整錯誤清單（共 ${diagnosticItems.length.toLocaleString("zh-TW")} 項）</h2><div class="scroll"><table><thead>${row(["序號", "工作表", "來源列號", "欄位位置", "欄位名稱", "原始值", "錯誤原因"], "th")}</thead><tbody>${diagnosticItems.map((issue, index) => row([index + 1, issue.sheet, issue.row, issue.column, issue.field, issue.value, issue.message])).join("")}</tbody></table></div><p>錯誤清單未截斷；可捲動查看或使用瀏覽器搜尋。${diagnosticItems.length ? "" : "未發現報表驗證錯誤。"}</p></html>`;
+  const url = URL.createObjectURL(new Blob([html], {type: "text/html;charset=utf-8"}));
+  const anchor = document.createElement("a"); anchor.href = url; anchor.download = includeReport ? "OUTPUT-結果與完整錯誤清單.html" : "OUTPUT-完整錯誤清單.html"; anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 $("choose-file").addEventListener("click", () => $("input-file").click());
@@ -221,6 +276,12 @@ for (const name of ["dragenter", "dragover"]) $("drop-zone").addEventListener(na
 for (const name of ["dragleave", "drop"]) $("drop-zone").addEventListener(name, (event) => {event.preventDefault(); $("drop-zone").classList.remove("dragover");});
 $("drop-zone").addEventListener("drop", (event) => chooseInput(event.dataTransfer.files[0]));
 form.addEventListener("submit", generate);
+$("export-raw").addEventListener("click", (event) => generate(event, true));
+$("sheet").addEventListener("change", () => {if (!busy) setBusy(false);});
+$("errors-prev").addEventListener("click", () => {diagnosticPage--; renderDiagnosticsPage();});
+$("errors-next").addEventListener("click", () => {diagnosticPage++; renderDiagnosticsPage();});
+$("download-diagnostics").addEventListener("click", () => downloadHTML());
+$("download-result-html").addEventListener("click", () => downloadHTML(true));
 form.addEventListener("input", resetResult);
 for (const name of ["year", "month", "fiscal-start"]) $(name).addEventListener("change", updatePeriod);
 $("add-alias").addEventListener("click", () => {addAlias(); resetResult();});
