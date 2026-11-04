@@ -4,6 +4,8 @@
 
 新增「**完整保留 Raw Data 匯出**」：格式驗證失敗也能將全部原始工作表與完整錯誤清單寫入 OUTPUT。錯誤畫面可捲動、切頁查看，另可「**下載結果 HTML**」直接離線開檔查看結果及所有錯誤。
 
+只要先看 OUTPUT 版型，可下載 [單一 HTML 預覽檔](samples/monthly-output-preview.html) 後直接開啟；內容為合成資料，保留 12 欄、三層表頭、黃／藍標示及完整 Remark，不需安裝程式。
+
 另有獨立的 **MonthlyReport.exe 本機瀏覽器報表工作台**，執行後自動開啟瀏覽器，在網頁選擇 INPUT、年月、分類，預覽並下載 OUTPUT Excel。Excel 與運算都留在本機。已保留門檻顏色與 END USER／P/N Remark 排序。使用 `run-report.bat` 開發執行，`build-report.bat` 在 Windows 打包；完整規則見 [單月報表使用說明](docs/monthly-report.md)。通用工作台的預設匯入容量另可透過 `EXCEL_INSIGHTS_MAX_CELLS`、`EXCEL_INSIGHTS_TOTAL_CELLS` 調整。
 
 這是原 C# / WPF 初版的 Python 替代實作（v0.3.2）。使用 **PySide6 + pandas**，提供本機自動判讀、可修改的報表預覽與範本 Excel 匯出，也保留多檔匯入、分組統計與 CSV。資料全程在本機處理，不上傳、不修改來源檔，也不需要安裝 Microsoft Excel。
