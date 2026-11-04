@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -11,13 +12,13 @@ from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QSplitter, QStackedWidget,
-    QTableView, QVBoxLayout, QWidget, QSpinBox,
+    QTableView, QVBoxLayout, QWidget, QSpinBox, QDialog,
 )
 
 from . import __version__
 from .core import (
-    SUMMARY_COLUMNS, TOTAL_CELL_LIMIT, Sheet, analyze, display, export_csv,
-    filter_rows, is_blank, number, read_workbook,
+    SUMMARY_COLUMNS, Sheet, analyze, display, export_csv, ImportLimits, ImportLimitError,
+    ImportCancelled, filter_rows, is_blank, number, read_workbook, workbook_sheet_names,
 )
 
 STYLE = """
@@ -81,35 +82,76 @@ class FrameModel(QAbstractTableModel):
         return None
 
 
+class CatalogWorker(QThread):
+    result = Signal(object, object)
+
+    def __init__(self, paths, parent=None):
+        super().__init__(parent)
+        self.paths = paths
+        self.cancelled = False
+
+    def run(self):
+        catalog, errors = {}, []
+        for path in self.paths:
+            if self.isInterruptionRequested():
+                break
+            try:
+                catalog[path] = workbook_sheet_names(path)
+            except Exception as exc:
+                errors.append(f"{path.name}：{exc}")
+        self.cancelled = self.isInterruptionRequested()
+        self.result.emit(catalog, errors)
+
+
 class ImportWorker(QThread):
     progress = Signal(str)
     result = Signal(object, object)
 
-    def __init__(self, paths: list[Path], existing: list[Sheet], parent=None, header_row=None):
+    def __init__(self, paths: list[Path], existing: list[Sheet], parent=None, header_row=None, selection=None, limits=None):
         super().__init__(parent)
         self.paths = paths
         self.existing = existing.copy()
         self.header_row = header_row
+        self.selection = selection
+        self.limits = limits or ImportLimits()
+        self.cancelled = False
 
     def run(self):
         loaded: list[Sheet] = []
         errors: list[str] = []
-        known = {str(sheet.path).casefold() for sheet in self.existing}
+        known = {(str(sheet.path).casefold(), sheet.name.casefold()) for sheet in self.existing}
         cells = sum(sheet.cells for sheet in self.existing)
         for path in self.paths:
-            if str(path).casefold() in known:
-                continue
+            if self.isInterruptionRequested():
+                self.cancelled = True; break
+            selected = None
+            if self.selection is not None:
+                selected = [name for name in self.selection.get(path, []) if (str(path).casefold(), name.casefold()) not in known]
+                if not selected: continue
             self.progress.emit(f"正在匯入 {path.name}…")
             try:
-                sheets = read_workbook(path, self.header_row)
+                remaining = self.limits.total_cells - cells
+                if remaining <= 0:
+                    raise ImportLimitError(f"已達總載入上限 {self.limits.total_cells:,} 儲存格，請移除工作表或提高匯入視窗的總上限。")
+                effective = replace(self.limits, max_cells=min(self.limits.max_cells, remaining))
+                try:
+                    sheets = read_workbook(path, self.header_row, selected_sheets=selected, limits=effective,
+                                           cancelled=self.isInterruptionRequested, progress=self.progress.emit)
+                except ImportLimitError as exc:
+                    if effective.max_cells < self.limits.max_cells:
+                        raise ImportLimitError(str(exc) + " 此額度受總載入上限限制，請提高總上限或移除已載入工作表。") from exc
+                    raise
+                sheets = [sheet for sheet in sheets if (str(sheet.path).casefold(), sheet.name.casefold()) not in known]
                 incoming = sum(sheet.cells for sheet in sheets)
-                if cells + incoming > TOTAL_CELL_LIMIT:
-                    raise ValueError(f"已載入資料超過 {TOTAL_CELL_LIMIT:,} 儲存格的記憶體保護上限；請先移除部分工作表。")
+                if cells + incoming > self.limits.total_cells:
+                    raise ImportLimitError(f"超過目前總載入上限 {self.limits.total_cells:,} 儲存格，請提高總上限或移除工作表。")
                 if not sheets:
                     raise ValueError("沒有可讀取的工作表。")
                 loaded.extend(sheets)
                 cells += incoming
-                known.add(str(path).casefold())
+                known.update((str(sheet.path).casefold(), sheet.name.casefold()) for sheet in sheets)
+            except ImportCancelled:
+                self.cancelled = True; break
             except Exception as exc:
                 errors.append(f"{path.name}：{exc}")
         self.result.emit(loaded, errors)
@@ -131,6 +173,9 @@ class MainWindow(QMainWindow):
         self.busy = False
         self._updating = False
         self._worker: ImportWorker | None = None
+        self._catalog_worker = None
+        self.import_limits = ImportLimits()
+        self._cancel_requested = False
         self.report_config = None
         self.setWindowTitle(f"Excel Insights · Python 資料統計工作台 v{__version__}")
         self.resize(1240, 850)
@@ -180,7 +225,7 @@ class MainWindow(QMainWindow):
         self.clear_button.clicked.connect(self.clear_sheets)
         left.addWidget(self.remove_button)
         left.addWidget(self.clear_button)
-        left.addWidget(label("資料在本機處理，不上傳雲端。\n首列視為欄名；不修改來源檔。"))
+        left.addWidget(label("資料在本機處理，不上傳雲端。\n標題列自動判讀；不修改來源檔。"))
         layout.addWidget(sidebar)
 
         workspace = QWidget()
@@ -244,7 +289,13 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.hide()
-        right.addWidget(self.progress)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self.progress, 1)
+        self.cancel_button = QPushButton("取消匯入")
+        self.cancel_button.clicked.connect(self.cancel_import)
+        self.cancel_button.hide()
+        progress_row.addWidget(self.cancel_button)
+        right.addLayout(progress_row)
         self.status = label("尚未匯入資料。請選取 Excel 檔案開始。", "status")
         right.addWidget(self.status)
         layout.addWidget(workspace, 1)
@@ -282,15 +333,62 @@ class MainWindow(QMainWindow):
             return
         if not paths:
             return
-        self.busy = True
-        for button in (self.import_button, self.remove_button, self.clear_button, self.report_button):
-            button.setEnabled(False)
-        self.progress.show()
-        self._worker = ImportWorker(paths, self.sheets, self, self.header_row.value() or None)
+        self._cancel_requested = False
+        self._set_busy(True)
+        self.status.setText("正在讀取工作表名稱；接著可選要匯入的表與資料量上限。")
+        worker = CatalogWorker(paths, self)
+        self._catalog_worker = worker
+        worker.result.connect(self._catalog_result)
+        worker.finished.connect(lambda current=worker: self._catalog_finished(current))
+        worker.start()
+
+    def _set_busy(self, busy):
+        self.busy = busy
+        for button in (self.import_button, self.remove_button, self.clear_button, self.report_button, self.header_row):
+            button.setEnabled(not busy)
+        self.progress.setVisible(busy)
+        self.cancel_button.setVisible(busy)
+        self.cancel_button.setEnabled(busy)
+
+    def select_import(self, catalog):
+        from .import_ui import ImportSelectionDialog
+        dialog = ImportSelectionDialog(catalog, self.import_limits, sum(sheet.cells for sheet in self.sheets), self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        result = (dialog.selection(), dialog.limits()) if accepted else None
+        dialog.deleteLater()
+        return result
+
+    def _catalog_result(self, catalog, errors):
+        if self._cancel_requested or self._catalog_worker and self._catalog_worker.cancelled:
+            self.status.setText("已取消匯入。")
+            self._set_busy(False); return
+        if errors:
+            QMessageBox.warning(self, "部分檔案無法開啟", "\n\n".join(errors))
+        if not catalog:
+            self.status.setText("沒有可讀取的工作表。")
+            self._set_busy(False); return
+        selected = self.select_import(catalog)
+        if selected is None or not selected[0]:
+            self.status.setText("已取消匯入。")
+            self._set_busy(False); return
+        selection, self.import_limits = selected
+        self._worker = ImportWorker(list(selection), self.sheets, self, self.header_row.value() or None,
+                                    selection, self.import_limits)
         self._worker.progress.connect(self.status.setText)
         self._worker.result.connect(self._import_result)
         self._worker.finished.connect(self._import_finished)
         self._worker.start()
+
+    def _catalog_finished(self, worker):
+        if self._catalog_worker is worker: self._catalog_worker = None
+        worker.deleteLater()
+
+    def cancel_import(self):
+        self._cancel_requested = True
+        for worker in (self._catalog_worker, self._worker):
+            if worker and worker.isRunning(): worker.requestInterruption()
+        self.cancel_button.setEnabled(False)
+        self.status.setText("正在取消匯入；不會保留尚未完整讀取的檔案。")
 
     def _import_result(self, sheets, errors):
         for sheet in sheets:
@@ -302,14 +400,13 @@ class MainWindow(QMainWindow):
             self.sheet_list.setCurrentRow(0)
         self.refresh()
         self.status.setText(self.status.text() + f" 本次新增 {len(sheets)} 張工作表。")
+        if self._cancel_requested or self._worker and self._worker.cancelled:
+            self.status.setText(self.status.text() + " 已取消其餘匯入。")
         if errors:
             QMessageBox.warning(self, "部分檔案未匯入", "\n\n".join(errors))
 
     def _import_finished(self):
-        self.busy = False
-        for button in (self.import_button, self.remove_button, self.clear_button, self.report_button):
-            button.setEnabled(True)
-        self.progress.hide()
+        self._set_busy(False)
         if self._worker:
             self._worker.deleteLater()
             self._worker = None
@@ -498,6 +595,22 @@ def main() -> int:
             if len(probe) != 1 or probe[0].data.shape != (1, 2) or probe[0].data.iloc[0]["Amount"] != 120:
                 raise ValueError("Formatted blank ranges changed the imported data")
             report["format_range_ignored"] = True
+            from .import_ui import ImportSelectionDialog
+            selection_path = args.smoke_output.with_name("sheet-selection-probe.xlsx")
+            selection_book = Workbook(); raw_sheet = selection_book.active; raw_sheet.title = "Raw Data"
+            raw_sheet.append(["Tech Node", "Amount"]); raw_sheet.append(["3nm", 120])
+            pivot_sheet = selection_book.create_sheet("monthly pivot(CS)")
+            pivot_sheet.append([f"column-{i}" for i in range(100)])
+            pivot_sheet.append(list(range(100)))
+            selection_book.save(selection_path); selection_book.close()
+            catalog = {selection_path: workbook_sheet_names(selection_path)}
+            selection_dialog = ImportSelectionDialog(catalog, ImportLimits())
+            chosen = selection_dialog.selection()[selection_path]
+            selected_data = read_workbook(selection_path, selected_sheets=chosen, limits=ImportLimits(max_cells=10))
+            if chosen != ["Raw Data"] or len(selected_data) != 1 or selected_data[0].data.iloc[0]["Amount"] != 120:
+                raise ValueError("Selected-sheet import did not exclude the pivot")
+            selection_dialog.close()
+            report["sheet_selection_probe"] = True
             report["version"] = __version__
             args.smoke_output.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
             window.close()

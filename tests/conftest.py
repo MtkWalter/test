@@ -26,13 +26,22 @@ def window(qapp, monkeypatch):
     from excel_insights.app import MainWindow
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: QMessageBox.StandardButton.Ok)
     monkeypatch.setattr(QMessageBox, "critical", lambda *args: QMessageBox.StandardButton.Ok)
+    # Existing interaction tests simulate selecting all sheets in the import dialog.
+    monkeypatch.setattr(MainWindow, "select_import", lambda self, catalog: (catalog, self.import_limits))
     widget = MainWindow()
     widget.show()
     qapp.processEvents()
     yield widget
-    if widget._worker:
-        widget._worker.wait(10000)
-        qapp.processEvents()
+    if widget.busy:
+        from PySide6.QtTest import QTest
+        import time
+        widget.cancel_import()
+        deadline = time.monotonic() + 15
+        while widget.busy and time.monotonic() < deadline:
+            qapp.processEvents(); QTest.qWait(10)
+    for worker in (widget._catalog_worker, widget._worker):
+        if worker: worker.wait(10000)
+    qapp.processEvents()
     widget.close()
     widget.deleteLater()
     qapp.processEvents()
